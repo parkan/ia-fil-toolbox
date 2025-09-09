@@ -1,5 +1,5 @@
 [project]
-name = "ia-fetch"
+name = "fil-meta-crawler"
 version = "0.1.0"
 description = "Fetch and parse IA-style metadata/files XMLs from an IPFS trustless gateway into SQLite"
 requires-python = ">=3.9"
