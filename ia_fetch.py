@@ -8,6 +8,7 @@ import tempfile
 import sqlite3
 import json
 import argparse
+import csv
 from typing import Dict, Any, List, Optional
 from lxml import etree
 
@@ -178,18 +179,55 @@ class MetadataFetcher:
         conn.close()
         print(f"  Completed {cid}")
 
+def read_cids_from_file(file_path: str) -> List[str]:
+    """Read CIDs from a file, supporting both plain text and CSV formats"""
+    cids = []
+    
+    with open(file_path, 'r') as f:
+        # Try to detect if it's a CSV file by reading the first line
+        first_line = f.readline().strip()
+        f.seek(0)  # Reset file pointer
+        
+        # Check if the first line looks like a CSV header
+        if ',' in first_line and ('cid' in first_line.lower() or 'CID' in first_line):
+            # Handle as CSV
+            reader = csv.DictReader(f)
+            cid_column = None
+            
+            # Find the CID column (case-insensitive)
+            for column in reader.fieldnames:
+                if column.lower() == 'cid':
+                    cid_column = column
+                    break
+            
+            if not cid_column:
+                raise ValueError("CSV file must have a column named 'cid' (case-insensitive)")
+            
+            for row in reader:
+                cid = row[cid_column].strip()
+                if cid and not cid.startswith('#'):
+                    cids.append(cid)
+        else:
+            # Handle as plain text (one CID per line)
+            f.seek(0)  # Reset file pointer
+            for line in f:
+                cid = line.strip()
+                if cid and not cid.startswith('#'):
+                    cids.append(cid)
+    
+    return cids
+
 def main():
     parser = argparse.ArgumentParser(description="Fetch and parse IA-style metadata from IPFS into SQLite")
     parser.add_argument('cids', nargs='*', help='CIDs to process')
-    parser.add_argument('-f', '--file', help='File containing CIDs (one per line)')
+    parser.add_argument('-f', '--file', help='File containing CIDs (plain text: one per line, or CSV with "cid" column)')
     parser.add_argument('--db', default='metadata.db', help='SQLite database path (default: metadata.db)')
     
     args = parser.parse_args()
     
     cids: List[str] = []
     if args.file:
-        with open(args.file, 'r') as f:
-            cids = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+        cids = read_cids_from_file(args.file)
     elif args.cids:
         cids = args.cids
     else:
