@@ -14,7 +14,7 @@ from lxml import etree
 class MetadataFetcher:
     def __init__(self, db_path: str = "metadata.db"):
         self.db_path = db_path
-        self.ipfs_api_url = "http://127.0.0.1:5002"  # Staging IPFS API
+        self.ipfs_api_url = "http://127.0.0.1:5009"  # Staging IPFS API
         self.gateways = [
 #            "https://trustless-gateway.link",
             "https://ia.dcentnetworks.nl"

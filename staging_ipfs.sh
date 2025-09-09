@@ -13,8 +13,8 @@ if [ ! -d "$REPO_DIR" ]; then
 fi
 
 # Set API port to 5002 to avoid conflicts
-ipfs config Addresses.API /ip4/127.0.0.1/tcp/5002
+ipfs config Addresses.API /ip4/127.0.0.1/tcp/5009
 
-echo "Starting staging IPFS daemon on port 5002..."
+echo "Starting staging IPFS daemon on port 5009..."
 echo "Press Ctrl+C to stop"
 ipfs daemon --offline
