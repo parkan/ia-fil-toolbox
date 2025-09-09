@@ -1,0 +1,20 @@
+[project]
+name = "ia-fetch"
+version = "0.1.0"
+description = "Fetch and parse IA-style metadata/files XMLs from an IPFS trustless gateway into SQLite"
+requires-python = ">=3.9"
+dependencies = [
+    "lxml", # for robust XML parsing (stdlib xml.etree works too, but lxml is safer)
+    "requests>=2.32.5",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+ia-fetch = "ia_fetch:main"
+
+[tool.setuptools]
+py-modules = ["ia_fetch"]
+
