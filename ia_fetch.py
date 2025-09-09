@@ -194,7 +194,14 @@ def main():
             fetcher.process_cid(cid)
         except Exception as e:
             print(f"Error processing {cid}: {e}", file=sys.stderr)
-            continue
+        finally:
+            # Clean up IPFS repo after processing each CID
+            print(f"  Running garbage collection for {cid}...")
+            try:
+                subprocess.run(['ipfs', 'repo', 'gc', '--quiet'], 
+                             capture_output=True, check=True)
+            except subprocess.CalledProcessError as gc_error:
+                print(f"  Warning: IPFS GC failed: {gc_error}", file=sys.stderr)
     print(f"\nDatabase saved to: {fetcher.db_path}")
     conn = sqlite3.connect(fetcher.db_path)
     cursor = conn.cursor()

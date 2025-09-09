@@ -87,7 +87,7 @@ wheels = [
 ]
 
 [[package]]
-name = "ia-fetch"
+name = "fil-meta-crawler"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
