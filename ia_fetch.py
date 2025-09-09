@@ -7,17 +7,25 @@ import subprocess
 import tempfile
 import sqlite3
 import json
+import argparse
 from typing import Dict, Any, List, Optional
 from lxml import etree
 
 class MetadataFetcher:
     def __init__(self, db_path: str = "metadata.db"):
         self.db_path = db_path
+        self.ipfs_api_url = "http://127.0.0.1:5002"  # Staging IPFS API
         self.gateways = [
 #            "https://trustless-gateway.link",
             "https://ia.dcentnetworks.nl"
         ]
         self.init_db()
+    
+    def _run_ipfs_cmd(self, cmd_args: List[str], **kwargs) -> subprocess.CompletedProcess:
+        """Run an IPFS command using the staging API endpoint"""
+        env = os.environ.copy()
+        env['IPFS_API'] = self.ipfs_api_url
+        return subprocess.run(['ipfs'] + cmd_args, env=env, **kwargs)
     
     def init_db(self):
         conn = sqlite3.connect(self.db_path)
@@ -52,8 +60,8 @@ class MetadataFetcher:
         return False
     
     def import_dag(self, car_path: str) -> bool:
-        result = subprocess.run(
-            ['ipfs', 'dag', 'import', '--stats=true', '--pin-roots=false', car_path],
+        result = self._run_ipfs_cmd(
+            ['dag', 'import', '--stats=true', '--pin-roots=false', car_path],
             capture_output=True,
             text=True
         )
@@ -63,8 +71,8 @@ class MetadataFetcher:
         return True
     
     def list_files(self, cid: str) -> List[str]:
-        result = subprocess.run(
-            ['ipfs', 'ls', '--resolve-type=false', '--size=false', cid],
+        result = self._run_ipfs_cmd(
+            ['ls', '--resolve-type=false', '--size=false', cid],
             capture_output=True,
             text=True
         )
@@ -92,8 +100,8 @@ class MetadataFetcher:
                 return None
             if not self.import_dag(car_path):
                 return None
-            cat = subprocess.run(
-                ['ipfs', 'cat', f'/ipfs/{cid}/{filepath}'],
+            cat = self._run_ipfs_cmd(
+                ['cat', f'/ipfs/{cid}/{filepath}'],
                 capture_output=True
             )
             if cat.returncode != 0:
@@ -171,24 +179,26 @@ class MetadataFetcher:
         print(f"  Completed {cid}")
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: fetch-meta-to-sqlite.py <cid1> [cid2] [cid3] ...")
-        print("   or: fetch-meta-to-sqlite.py -f <file_with_cids>")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Fetch and parse IA-style metadata from IPFS into SQLite")
+    parser.add_argument('cids', nargs='*', help='CIDs to process')
+    parser.add_argument('-f', '--file', help='File containing CIDs (one per line)')
+    parser.add_argument('--db', default='metadata.db', help='SQLite database path (default: metadata.db)')
+    
+    args = parser.parse_args()
+    
     cids: List[str] = []
-    if sys.argv[1] == '-f':
-        if len(sys.argv) < 3:
-            print("Error: -f requires a filename")
-            sys.exit(1)
-        with open(sys.argv[2], 'r') as f:
+    if args.file:
+        with open(args.file, 'r') as f:
             cids = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+    elif args.cids:
+        cids = args.cids
     else:
-        cids = sys.argv[1:]
+        parser.error("Must provide either CIDs as arguments or use --file option")
     for cmd in ['ipfs', 'car']:
         if subprocess.run(['which', cmd], capture_output=True).returncode != 0:
             print(f"Error: {cmd} command not found in PATH")
             sys.exit(1)
-    fetcher = MetadataFetcher()
+    fetcher = MetadataFetcher(db_path=args.db)
     for cid in cids:
         try:
             fetcher.process_cid(cid)
@@ -198,8 +208,10 @@ def main():
             # Clean up IPFS repo after processing each CID
             print(f"  Running garbage collection for {cid}...")
             try:
+                env = os.environ.copy()
+                env['IPFS_API'] = fetcher.ipfs_api_url
                 subprocess.run(['ipfs', 'repo', 'gc', '--quiet'], 
-                             capture_output=True, check=True)
+                             env=env, capture_output=True, check=True)
             except subprocess.CalledProcessError as gc_error:
                 print(f"  Warning: IPFS GC failed: {gc_error}", file=sys.stderr)
     print(f"\nDatabase saved to: {fetcher.db_path}")
