@@ -1,4 +1,5 @@
 .ipfs_staging/
+*.csv
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
