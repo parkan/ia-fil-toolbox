@@ -21,7 +21,27 @@ ipfs config Addresses.API /ip4/127.0.0.1/tcp/5009
 # Disable HTTP gateway (not needed for staging)
 ipfs config Addresses.Gateway ""
 
+# Routing: use a custom router set
+ipfs config Routing.Type custom
 
-echo "Starting staging IPFS daemon on port 5009 (gateway disabled, optimized for staging)..."
+# Router: local delegated router at 127.0.0.1:8190
+ipfs config --json Routing.Routers.local \
+'{"Type":"http","Parameters":{"Endpoint":"http://127.0.0.1:8190/routing/v1"}}'
+
+# Methods: all required methods mapped to "local"
+ipfs config --json Routing.Methods \
+'{"find-providers":{"RouterName":"local"},
+  "provide":{"RouterName":"local"},
+  "find-peers":{"RouterName":"local"},
+  "get-ipns":{"RouterName":"local"},
+  "put-ipns":{"RouterName":"local"}}'
+
+# HTTP Retrieval: enable
+ipfs config --json HTTPRetrieval.Enabled true
+
+# Reprovider: only provide pinned content (no unpinned CIDs)
+ipfs config --json Reprovider.Strategy '"pinned"'
+
+echo "Starting staging IPFS daemon on port 5009 (gateway disabled, custom routing configured)..."
 echo "Press Ctrl+C to stop"
 ipfs daemon --offline
