@@ -168,6 +168,24 @@ class MetadataFetcher:
             if os.path.exists(dag_car_path):
                 os.unlink(dag_car_path)
     
+    def _filter_existing_meta_files(self, meta_files: List[str]) -> List[str]:
+        """Filter out meta files that already exist in the database"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        try:
+            meta_files_to_fetch = []
+            for meta_file in meta_files:
+                identifier = meta_file.replace('_meta.xml', '')
+                cursor.execute('SELECT 1 FROM metadata WHERE identifier = ?', (identifier,))
+                if not cursor.fetchone():
+                    meta_files_to_fetch.append(meta_file)
+                else:
+                    print(f"    Already exists, skipping {identifier}")
+            return meta_files_to_fetch
+        finally:
+            conn.close()
+    
     def _fetch_meta_files_parallel(self, cid: str, meta_files: List[str]) -> Dict[str, bytes]:
         """Fetch multiple meta files in parallel, return successful ones"""
         results = {}
@@ -215,12 +233,6 @@ class MetadataFetcher:
             for meta_file, content in meta_file_data.items():
                 identifier = meta_file.replace('_meta.xml', '')
                 
-                # Check if already exists
-                cursor.execute('SELECT 1 FROM metadata WHERE identifier = ?', (identifier,))
-                if cursor.fetchone():
-                    print(f"    Already exists, skipping {identifier}")
-                    continue
-                
                 try:
                     meta_dict = self.xml_to_dict(content)
                     cursor.execute('''
@@ -262,9 +274,18 @@ class MetadataFetcher:
         
         print(f"  Found {len(meta_files)} meta files")
         
+        # Pre-filter: check which meta files we don't already have
+        meta_files_to_fetch = self._filter_existing_meta_files(meta_files)
+        if not meta_files_to_fetch:
+            print("  All meta files already exist, skipping")
+            print(f"  Completed {cid}")
+            return
+        
+        print(f"  Need to fetch {len(meta_files_to_fetch)} new meta files")
+        
         # PARALLEL: fetch all meta file CARs concurrently
         print("  Downloading meta files...")
-        meta_file_data = self._fetch_meta_files_parallel(cid, meta_files)
+        meta_file_data = self._fetch_meta_files_parallel(cid, meta_files_to_fetch)
         
         # Sequential: parse and write to DB in single transaction
         print("  Processing to database...")
