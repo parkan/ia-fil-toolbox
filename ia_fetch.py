@@ -9,7 +9,9 @@ import sqlite3
 import json
 import argparse
 import csv
-from typing import Dict, Any, List, Optional
+import datetime
+import concurrent.futures
+from typing import Dict, Any, List, Optional, Tuple
 from lxml import etree
 
 class MetadataFetcher:
@@ -21,6 +23,13 @@ class MetadataFetcher:
             "https://ia.dcentnetworks.nl"
         ]
         self.init_db()
+    
+    def _log_errors(self, errors: List[str]):
+        """Log CID-scoped errors to file in tab-separated format"""
+        with open('ia_fetch_errors.log', 'a') as f:
+            timestamp = datetime.datetime.now().isoformat()
+            for error in errors:
+                f.write(f"{timestamp}\t{error}\n")
     
     def _run_ipfs_cmd(self, cmd_args: List[str], **kwargs) -> subprocess.CompletedProcess:
         """Run an IPFS command using the staging API endpoint"""
@@ -135,48 +144,153 @@ class MetadataFetcher:
             return result if result else None
         return {root.tag: element_to_dict(root)}
     
-    def process_cid(self, cid: str):
-        print(f"\nProcessing CID: {cid}")
+    def _fetch_and_import_root_dag(self, cid: str) -> bool:
+        """Fetch and import the root DAG for a CID"""
         print("  Fetching root DAG...")
         with tempfile.NamedTemporaryFile(suffix='.car', delete=False) as tmp:
             dag_car_path = tmp.name
-        dag_rel = f"ipfs/{cid}?dag-scope=entity&format=car"
-        if not self.fetch_car(dag_rel, dag_car_path):
-            print(f"  Failed to fetch root DAG for {cid}", file=sys.stderr)
-            return
-        print("  Importing DAG...")
-        if not self.import_dag(dag_car_path):
-            os.unlink(dag_car_path)
-            return
-        os.unlink(dag_car_path)
-        print("  Listing files...")
-        meta_files = self.list_files(cid)
-        print(f"  Found {len(meta_files)} meta files")
+        
+        try:
+            dag_rel = f"ipfs/{cid}?dag-scope=entity&format=car"
+            if not self.fetch_car(dag_rel, dag_car_path):
+                error_msg = f"{cid}\t*\tGATEWAY_ERROR\tFailed to fetch root DAG"
+                self._log_errors([error_msg])
+                return False
+            
+            print("  Importing DAG...")
+            if not self.import_dag(dag_car_path):
+                error_msg = f"{cid}\t*\tIPFS_ERROR\tFailed to import root DAG"
+                self._log_errors([error_msg])
+                return False
+            
+            return True
+        finally:
+            if os.path.exists(dag_car_path):
+                os.unlink(dag_car_path)
+    
+    def _filter_existing_meta_files(self, meta_files: List[str]) -> List[str]:
+        """Filter out meta files that already exist in the database"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        for meta_file in meta_files:
-            identifier = meta_file.replace('_meta.xml', '')
-            print(f"  Processing {identifier}...")
-            cursor.execute('SELECT 1 FROM metadata WHERE identifier = ?', (identifier,))
-            if cursor.fetchone():
-                print(f"    Already exists, skipping")
-                continue
-            content = self.fetch_file_via_car(cid, meta_file)
-            if not content:
-                print(f"    ✗ Failed to fetch {meta_file}")
-                continue
+        
+        try:
+            meta_files_to_fetch = []
+            for meta_file in meta_files:
+                identifier = meta_file.replace('_meta.xml', '')
+                cursor.execute('SELECT 1 FROM metadata WHERE identifier = ?', (identifier,))
+                if not cursor.fetchone():
+                    meta_files_to_fetch.append(meta_file)
+                else:
+                    print(f"    Already exists, skipping {identifier}")
+            return meta_files_to_fetch
+        finally:
+            conn.close()
+    
+    def _fetch_meta_files_parallel(self, cid: str, meta_files: List[str]) -> Dict[str, bytes]:
+        """Fetch multiple meta files in parallel, return successful ones"""
+        results = {}
+        errors = []
+        
+        def fetch_single_meta(meta_file: str) -> Tuple[str, Optional[bytes]]:
             try:
-                meta_dict = self.xml_to_dict(content)
-            except etree.XMLSyntaxError as e:
-                print(f"    ⚠ XML parse error for {meta_file}: {e}. Skipping insert.", file=sys.stderr)
-                continue
-            cursor.execute('''
-                INSERT OR REPLACE INTO metadata (identifier, cid, meta)
-                VALUES (?, ?, ?)
-            ''', (identifier, cid, json.dumps(meta_dict)))
-            print(f"    ✓ Inserted {identifier}")
-        conn.commit()
-        conn.close()
+                content = self.fetch_file_via_car(cid, meta_file)
+                if content:
+                    print(f"    ✓ Downloaded {meta_file}")
+                    return meta_file, content
+                else:
+                    errors.append(f"{cid}\t{meta_file}\tGATEWAY_ERROR\tFailed to fetch meta file")
+                    return meta_file, None
+            except Exception as e:
+                errors.append(f"{cid}\t{meta_file}\tGATEWAY_ERROR\t{str(e)}")
+                return meta_file, None
+        
+        # Limit concurrency to avoid overwhelming gateways
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            futures = {executor.submit(fetch_single_meta, mf): mf for mf in meta_files}
+            
+            for future in concurrent.futures.as_completed(futures):
+                meta_file, content = future.result()
+                if content:
+                    results[meta_file] = content
+        
+        # Log any errors that occurred
+        if errors:
+            self._log_errors(errors)
+        
+        return results
+    
+    def _process_meta_files_to_db(self, cid: str, meta_file_data: Dict[str, bytes]):
+        """Process downloaded meta files and write to DB in single transaction"""
+        if not meta_file_data:
+            print(f"  No meta files successfully downloaded for {cid}")
+            return
+        
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        errors = []
+        
+        try:
+            for meta_file, content in meta_file_data.items():
+                identifier = meta_file.replace('_meta.xml', '')
+                
+                try:
+                    meta_dict = self.xml_to_dict(content)
+                    cursor.execute('''
+                        INSERT INTO metadata (identifier, cid, meta)
+                        VALUES (?, ?, ?)
+                    ''', (identifier, cid, json.dumps(meta_dict)))
+                    print(f"    ✓ Inserted {identifier}")
+                    
+                except etree.XMLSyntaxError as e:
+                    errors.append(f"{cid}\t{identifier}\tDATA_ERROR\tXML syntax error: {str(e)}")
+                except Exception as e:
+                    errors.append(f"{cid}\t{identifier}\tDATA_ERROR\t{str(e)}")
+            
+            conn.commit()
+            
+        except Exception as e:
+            conn.rollback()
+            errors.append(f"{cid}\t*\tDB_ERROR\t{str(e)}")
+            raise
+        finally:
+            conn.close()
+            if errors:
+                self._log_errors(errors)
+    
+    def process_cid(self, cid: str):
+        print(f"\nProcessing CID: {cid}")
+        
+        # Sequential: fetch and import root DAG
+        if not self._fetch_and_import_root_dag(cid):
+            return
+        
+        # Sequential: list meta files
+        print("  Listing files...")
+        meta_files = self.list_files(cid)
+        if not meta_files:
+            error_msg = f"{cid}\t*\tIPFS_ERROR\tNo meta files found or failed to list files"
+            self._log_errors([error_msg])
+            return
+        
+        print(f"  Found {len(meta_files)} meta files")
+        
+        # Pre-filter: check which meta files we don't already have
+        meta_files_to_fetch = self._filter_existing_meta_files(meta_files)
+        if not meta_files_to_fetch:
+            print("  All meta files already exist, skipping")
+            print(f"  Completed {cid}")
+            return
+        
+        print(f"  Need to fetch {len(meta_files_to_fetch)} new meta files")
+        
+        # PARALLEL: fetch all meta file CARs concurrently
+        print("  Downloading meta files...")
+        meta_file_data = self._fetch_meta_files_parallel(cid, meta_files_to_fetch)
+        
+        # Sequential: parse and write to DB in single transaction
+        print("  Processing to database...")
+        self._process_meta_files_to_db(cid, meta_file_data)
+        
         print(f"  Completed {cid}")
 
 def read_cids_from_file(file_path: str) -> List[str]:
