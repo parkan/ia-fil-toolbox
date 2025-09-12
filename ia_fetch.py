@@ -17,22 +17,16 @@ from lxml import etree
 class MetadataFetcher:
     def __init__(self, db_path: str = "metadata.db"):
         self.db_path = db_path
-        self.ipfs_api_url = "http://127.0.0.1:5009"  # Staging IPFS API
-        self.gateways = [
-#            "https://trustless-gateway.link",
-            "https://ia.dcentnetworks.nl"
-        ]
+        self.ipfs_api_url = "http://127.0.0.1:5009"
         self.init_db()
     
     def _log_errors(self, errors: List[str]):
-        """Log CID-scoped errors to file in tab-separated format"""
         with open('ia_fetch_errors.log', 'a') as f:
             timestamp = datetime.datetime.now().isoformat()
             for error in errors:
                 f.write(f"{timestamp}\t{error}\n")
     
     def _run_ipfs_cmd(self, cmd_args: List[str], **kwargs) -> subprocess.CompletedProcess:
-        """Run an IPFS command using the staging API endpoint"""
         env = os.environ.copy()
         env['IPFS_API'] = self.ipfs_api_url
         return subprocess.run(['ipfs'] + cmd_args, env=env, **kwargs)
@@ -51,34 +45,17 @@ class MetadataFetcher:
         conn.commit()
         conn.close()
     
-    def fetch_car(self, relative_path: str, output_path: str) -> bool:
-        headers = {'Accept': 'application/vnd.ipld.car'}
-        for gateway in self.gateways:
-            full_url = f"{gateway.rstrip('/')}/{relative_path.lstrip('/')}"
-            try:
-                print(f"  Fetching from {full_url}...", file=sys.stderr)
-                r = requests.get(full_url, headers=headers, stream=True, timeout=30)
-                if r.status_code == 200:
-                    with open(output_path, 'wb') as f:
-                        for chunk in r.iter_content(chunk_size=8192):
-                            f.write(chunk)
-                    return True
-                else:
-                    print(f"  Gateway {gateway} returned {r.status_code}", file=sys.stderr)
-            except Exception as e:
-                print(f"  Gateway {gateway} failed: {e}", file=sys.stderr)
-        return False
-    
-    def import_dag(self, car_path: str) -> bool:
-        result = self._run_ipfs_cmd(
-            ['dag', 'import', '--stats=true', '--pin-roots=false', car_path],
-            capture_output=True,
-            text=True
-        )
-        if result.returncode != 0:
-            print(f"  Import failed: {result.stderr}", file=sys.stderr)
-            return False
-        return True
+    def fetch_meta_file(self, cid: str, meta_file: str) -> Optional[bytes]:
+        try:
+            result = self._run_ipfs_cmd(
+                ['cat', f'/ipfs/{cid}/{meta_file}'],
+                capture_output=True
+            )
+            if result.returncode != 0:
+                return None
+            return result.stdout
+        except Exception:
+            return None
     
     def list_files(self, cid: str) -> List[str]:
         result = self._run_ipfs_cmd(
@@ -100,26 +77,6 @@ class MetadataFetcher:
                     out.append(filename)
         return out
     
-    def fetch_file_via_car(self, cid: str, filepath: str) -> Optional[bytes]:
-        with tempfile.NamedTemporaryFile(suffix='.car', delete=False) as tmp_car:
-            car_path = tmp_car.name
-        try:
-            rel = f"ipfs/{cid}/{filepath}?format=car&dag-scope=entity"
-            if not self.fetch_car(rel, car_path):
-                print(f"  Failed to fetch {filepath}", file=sys.stderr)
-                return None
-            if not self.import_dag(car_path):
-                return None
-            cat = self._run_ipfs_cmd(
-                ['cat', f'/ipfs/{cid}/{filepath}'],
-                capture_output=True
-            )
-            if cat.returncode != 0:
-                print(f"  ipfs cat failed for {cid}/{filepath}: {cat.stderr.decode('utf-8', errors='ignore')}", file=sys.stderr)
-                return None
-            return cat.stdout
-        finally:
-            os.unlink(car_path)
     
     def xml_to_dict(self, xml_content: bytes) -> Dict[str, Any]:
         root = etree.fromstring(xml_content)
@@ -144,32 +101,7 @@ class MetadataFetcher:
             return result if result else None
         return {root.tag: element_to_dict(root)}
     
-    def _fetch_and_import_root_dag(self, cid: str) -> bool:
-        """Fetch and import the root DAG for a CID"""
-        print("  Fetching root DAG...")
-        with tempfile.NamedTemporaryFile(suffix='.car', delete=False) as tmp:
-            dag_car_path = tmp.name
-        
-        try:
-            dag_rel = f"ipfs/{cid}?dag-scope=entity&format=car"
-            if not self.fetch_car(dag_rel, dag_car_path):
-                error_msg = f"{cid}\t*\tGATEWAY_ERROR\tFailed to fetch root DAG"
-                self._log_errors([error_msg])
-                return False
-            
-            print("  Importing DAG...")
-            if not self.import_dag(dag_car_path):
-                error_msg = f"{cid}\t*\tIPFS_ERROR\tFailed to import root DAG"
-                self._log_errors([error_msg])
-                return False
-            
-            return True
-        finally:
-            if os.path.exists(dag_car_path):
-                os.unlink(dag_car_path)
-    
     def _filter_existing_meta_files(self, meta_files: List[str]) -> List[str]:
-        """Filter out meta files that already exist in the database"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -187,24 +119,22 @@ class MetadataFetcher:
             conn.close()
     
     def _fetch_meta_files_parallel(self, cid: str, meta_files: List[str]) -> Dict[str, bytes]:
-        """Fetch multiple meta files in parallel, return successful ones"""
         results = {}
         errors = []
         
         def fetch_single_meta(meta_file: str) -> Tuple[str, Optional[bytes]]:
             try:
-                content = self.fetch_file_via_car(cid, meta_file)
+                content = self.fetch_meta_file(cid, meta_file)
                 if content:
-                    print(f"    ✓ Downloaded {meta_file}")
+                    print(f"    ✓ Fetched {meta_file}")
                     return meta_file, content
                 else:
-                    errors.append(f"{cid}\t{meta_file}\tGATEWAY_ERROR\tFailed to fetch meta file")
+                    errors.append(f"{cid}\t{meta_file}\tIPFS_ERROR\tFailed to fetch meta file")
                     return meta_file, None
             except Exception as e:
-                errors.append(f"{cid}\t{meta_file}\tGATEWAY_ERROR\t{str(e)}")
+                errors.append(f"{cid}\t{meta_file}\tIPFS_ERROR\t{str(e)}")
                 return meta_file, None
         
-        # Limit concurrency to avoid overwhelming gateways
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
             futures = {executor.submit(fetch_single_meta, mf): mf for mf in meta_files}
             
@@ -213,14 +143,12 @@ class MetadataFetcher:
                 if content:
                     results[meta_file] = content
         
-        # Log any errors that occurred
         if errors:
             self._log_errors(errors)
         
         return results
     
     def _process_meta_files_to_db(self, cid: str, meta_file_data: Dict[str, bytes]):
-        """Process downloaded meta files and write to DB in single transaction"""
         if not meta_file_data:
             print(f"  No meta files successfully downloaded for {cid}")
             return
@@ -260,11 +188,6 @@ class MetadataFetcher:
     def process_cid(self, cid: str):
         print(f"\nProcessing CID: {cid}")
         
-        # Sequential: fetch and import root DAG
-        if not self._fetch_and_import_root_dag(cid):
-            return
-        
-        # Sequential: list meta files
         print("  Listing files...")
         meta_files = self.list_files(cid)
         if not meta_files:
@@ -274,7 +197,6 @@ class MetadataFetcher:
         
         print(f"  Found {len(meta_files)} meta files")
         
-        # Pre-filter: check which meta files we don't already have
         meta_files_to_fetch = self._filter_existing_meta_files(meta_files)
         if not meta_files_to_fetch:
             print("  All meta files already exist, skipping")
@@ -283,32 +205,25 @@ class MetadataFetcher:
         
         print(f"  Need to fetch {len(meta_files_to_fetch)} new meta files")
         
-        # PARALLEL: fetch all meta file CARs concurrently
-        print("  Downloading meta files...")
+        print("  Fetching meta files...")
         meta_file_data = self._fetch_meta_files_parallel(cid, meta_files_to_fetch)
         
-        # Sequential: parse and write to DB in single transaction
         print("  Processing to database...")
         self._process_meta_files_to_db(cid, meta_file_data)
         
         print(f"  Completed {cid}")
 
 def read_cids_from_file(file_path: str) -> List[str]:
-    """Read CIDs from a file, supporting both plain text and CSV formats"""
     cids = []
     
     with open(file_path, 'r') as f:
-        # Try to detect if it's a CSV file by reading the first line
         first_line = f.readline().strip()
-        f.seek(0)  # Reset file pointer
+        f.seek(0)
         
-        # Check if the first line looks like a CSV header
         if ',' in first_line and ('cid' in first_line.lower() or 'CID' in first_line):
-            # Handle as CSV
             reader = csv.DictReader(f)
             cid_column = None
             
-            # Find the CID column (case-insensitive)
             for column in reader.fieldnames:
                 if column.lower() == 'cid':
                     cid_column = column
@@ -322,8 +237,7 @@ def read_cids_from_file(file_path: str) -> List[str]:
                 if cid and not cid.startswith('#'):
                     cids.append(cid)
         else:
-            # Handle as plain text (one CID per line)
-            f.seek(0)  # Reset file pointer
+            f.seek(0)
             for line in f:
                 cid = line.strip()
                 if cid and not cid.startswith('#'):
