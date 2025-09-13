@@ -323,7 +323,7 @@ def stop_staging_ipfs():
 def ensure_staging_ipfs():
     """Ensure staging IPFS daemon is running, start if needed"""
     try:
-        # Test if daemon is already running
+        # Test if daemon is already running AND can serve content
         result = subprocess.run(
             ["ipfs", "id"],
                    env={**os.environ, "IPFS_PATH": ".ipfs_staging"},
@@ -332,7 +332,16 @@ def ensure_staging_ipfs():
             timeout=2
         )
         if result.returncode == 0:
-            return  # Already running
+            # Additional check: try to list something to ensure daemon is fully ready
+            test_result = subprocess.run(
+                ["ipfs", "swarm", "peers"],
+                env={**os.environ, "IPFS_PATH": ".ipfs_staging"},
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            if test_result.returncode == 0:
+                return  # Already running and responsive
     except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
         pass
     

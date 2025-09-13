@@ -17,66 +17,10 @@ def run_cmd(cmd, **kwargs):
     result = subprocess.run(cmd, capture_output=True, text=True, env=env, **kwargs)
     if result.returncode != 0:
         # Return both stdout and stderr for unittest to handle
-        return None, result.stderr
-    return result.stdout.strip(), None
+        return None, result.stderr    # Always return stderr for debugging, even on success
+    return result.stdout.strip(), result.stderr.strip() if result.stderr.strip() else None
 
-def start_staging_ipfs():
-    """Start the staging IPFS daemon"""
-    print("Starting staging IPFS daemon...")
-    
-    # Start the staging IPFS script in background
-    proc = subprocess.Popen(
-        ["./staging_ipfs.sh"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
-    )
-    
-    # Wait for daemon to be ready
-    print("Waiting for IPFS daemon to be ready...")
-    for i in range(30):  # Wait up to 30 seconds
-        try:
-            # Test if IPFS API is responding
-            result = subprocess.run(
-                ["ipfs", "id"],
-                env={**os.environ, "IPFS_API": "http://127.0.0.1:5009", "IPFS_PATH": ".ipfs_staging"},
-                capture_output=True,
-                text=True,
-                timeout=2
-            )
-            if result.returncode == 0:
-                print("Staging IPFS daemon is ready")
-                return proc
-        except subprocess.TimeoutExpired:
-            pass
-        
-        time.sleep(1)
-        print(f"  Waiting... ({i+1}s)")
-        
-        # Check if process died
-        if proc.poll() is not None:
-            stdout, stderr = proc.communicate()
-            print(f"IPFS daemon failed to start:")
-            print(f"STDOUT: {stdout}")
-            print(f"STDERR: {stderr}")
-            return None
-    
-    print("Timeout waiting for IPFS daemon to start")
-    proc.terminate()
-    return None
-
-def stop_staging_ipfs(proc):
-    """Stop the staging IPFS daemon"""
-    if proc and proc.poll() is None:
-        print("Stopping staging IPFS daemon...")
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            print("Force killing IPFS daemon...")
-            proc.kill()
-            proc.wait()
-        print("Staging IPFS daemon stopped")
+# Daemon management is now handled automatically by the CLI
 
 def test_pipeline():
     """Test the complete files pipeline"""
@@ -330,16 +274,16 @@ class TestIAFilToolbox(unittest.TestCase):
     
     @classmethod
     def setUpClass(cls):
-        """Start IPFS daemon once for all tests"""
-        print("\n=== Starting IPFS daemon ===")
-        cls.ipfs_proc = start_staging_ipfs()
+        """Setup for all tests - CLI will handle daemon management"""
+        print("\n=== Test Setup (CLI handles daemon) ===")
     
     @classmethod  
     def tearDownClass(cls):
-        """Stop IPFS daemon after all tests"""
-        print("\n=== Stopping IPFS daemon ===")
-        if hasattr(cls, 'ipfs_proc') and cls.ipfs_proc:
-            stop_staging_ipfs(cls.ipfs_proc)
+        """Cleanup after all tests"""
+        print("\n=== Test Cleanup ===")
+        # Kill any leftover daemons from CLI (belt and suspenders)
+        import subprocess
+        subprocess.run(["pkill", "-f", "ipfs daemon"], capture_output=True)
     
     def setUp(self):
         """Clean up before each test"""
@@ -357,7 +301,7 @@ class TestIAFilToolbox(unittest.TestCase):
     
     def test_extract_items_command(self):
         """Test the extract-items command creates synthetic directories correctly"""
-        # Add test fixtures to IPFS
+        # Let CLI manage daemon - just add test fixtures using the staging daemon
         result, error = run_cmd(["ipfs", "add", "-r", "--cid-version=1", "test_fixtures"])
         self.assertIsNotNone(result, f"Failed to add test fixtures: {error}")
         
@@ -376,6 +320,16 @@ class TestIAFilToolbox(unittest.TestCase):
         # Parse CSV output - filter out non-CSV lines (logging output)
         lines = result.strip().split('\n')
         csv_lines = [line for line in lines if ',' in line and not line.startswith('  ')]
+        
+        # Show actual output if CSV parsing fails
+        if len(csv_lines) < 2:
+            print(f"\n=== DEBUG: Full command output ===")
+            print(f"Command: python3 ia_fil.py extract-items {root_cid}")
+            print(f"STDOUT:\n{result}")
+            if error:
+                print(f"STDERR:\n{error}")
+            print(f"Parsed CSV lines: {csv_lines}")
+            print(f"=== END DEBUG ===\n")
         
         self.assertGreaterEqual(len(csv_lines), 2, "Expected header + data lines in CSV output")
         self.assertEqual(csv_lines[0], "identifier,synthetic_cid", "Invalid CSV header")
