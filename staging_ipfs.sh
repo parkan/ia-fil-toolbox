@@ -6,9 +6,11 @@
 REPO_DIR=".ipfs_staging"
 export IPFS_PATH="$REPO_DIR"
 
-# Initialize repo if it doesn't exist
-if [ ! -d "$REPO_DIR" ]; then
+# Initialize repo if it doesn't exist or is invalid
+if [ ! -f "$REPO_DIR/config" ]; then
     echo "Initializing IPFS repo at $REPO_DIR..."
+    # Remove any partial/corrupted repo directory
+    rm -rf "$REPO_DIR"
     ipfs init --profile=pebbleds
 fi
 
