@@ -121,10 +121,10 @@ def test_pipeline():
         print(f"Root CID: {root_cid}")
         
         # Step 2: Run the files command
-        print(f"\n2. Running files command on {root_cid}...")
+        print(f"\n2. Running extract-items command on {root_cid}...")
         
         # Capture the CSV output
-        result = run_cmd(["python3", "fil_crawler.py", "files", root_cid])
+        result = run_cmd(["python3", "fil_crawler.py", "extract-items", root_cid])
         if not result:
             return False, ipfs_proc
         
@@ -203,6 +203,116 @@ def test_pipeline():
                     return False, ipfs_proc
                 print(f"  ✓ Can access {filename} ({len(cat_result)} bytes)")
         
+        # Step 4: Test merge-roots command
+        print(f"\n4. Testing merge-roots command...")
+        
+        # We'll create a second test CID and then merge both
+        # Create another test directory with overlapping and unique files
+        test_dir2 = Path("test_fixtures2")
+        test_dir2.mkdir(exist_ok=True)
+        
+        # Create some files that overlap with test_fixtures and some unique ones
+        (test_dir2 / "item1_doc.pdf").write_text("This is another PDF content")  # Same name, different content
+        (test_dir2 / "item3_data.csv").write_text("col1,col2\na,1\nb,2")  # Unique file
+        (test_dir2 / "shared_file.txt").write_text("This file exists in both")
+        
+        # Add the overlapping content to the first directory too
+        (Path("test_fixtures") / "shared_file.txt").write_text("This file exists in both")
+        
+        print("  Adding second test directory to IPFS...")
+        result2 = run_cmd(["ipfs", "add", "-r", "--cid-version=1", str(test_dir2)])
+        if not result2:
+            return False, ipfs_proc
+        
+        # Extract the second root CID
+        lines2 = result2.split('\n')
+        root_cid2 = None
+        for line in lines2:
+            if line.strip().endswith('test_fixtures2'):
+                root_cid2 = line.split()[1]
+                break
+        
+        if not root_cid2:
+            print("  Error: Could not find root CID for test_fixtures2")
+            return False, ipfs_proc
+        
+        print(f"  Second root CID: {root_cid2}")
+        
+        # Now re-add the first directory with the shared file
+        result1_updated = run_cmd(["ipfs", "add", "-r", "--cid-version=1", "test_fixtures"])
+        if not result1_updated:
+            return False, ipfs_proc
+        
+        # Extract the updated first root CID
+        lines1_updated = result1_updated.split('\n')
+        root_cid1_updated = None
+        for line in lines1_updated:
+            if line.strip().endswith('test_fixtures'):
+                root_cid1_updated = line.split()[1]
+                break
+        
+        if not root_cid1_updated:
+            print("  Error: Could not find updated root CID for test_fixtures")
+            return False, ipfs_proc
+        
+        print(f"  Updated first root CID: {root_cid1_updated}")
+        
+        # Test merge-roots command
+        print(f"  Running merge-roots on {root_cid1_updated} and {root_cid2}...")
+        merge_result = run_cmd(["python3", "fil_crawler.py", "merge-roots", root_cid1_updated, root_cid2])
+        if not merge_result:
+            print("  Error: merge-roots command failed")
+            return False, ipfs_proc
+        
+        merged_cid = merge_result.strip()
+        print(f"  ✓ Merged CID: {merged_cid}")
+        
+        # Validate the merged directory
+        print("  Validating merged directory...")
+        ls_merged = run_cmd(["ipfs", "ls", merged_cid])
+        if not ls_merged:
+            print("  Error: Could not list merged CID")
+            return False, ipfs_proc
+        
+        merged_files = []
+        for line in ls_merged.split('\n'):
+            if line.strip():
+                parts = line.split()
+                if len(parts) >= 3:
+                    merged_files.append(parts[2])
+        
+        print(f"  Files in merged directory: {merged_files}")
+        
+        # Check that we have files from both directories
+        expected_files = {
+            "item1_data.txt", "item1_doc.pdf", "item1_files.xml", "item1_meta.xml",
+            "item2_files.xml", "item2_image.jpg", "item2_meta.xml", "item2_notes.md",
+            "item3_data.csv", "shared_file.txt"
+        }
+        
+        actual_files = set(merged_files)
+        if not expected_files.issubset(actual_files):
+            missing = expected_files - actual_files
+            print(f"  Error: Missing files in merged directory: {missing}")
+            return False, ipfs_proc
+        
+        print(f"  ✓ All expected files present in merged directory")
+        
+        # Test that conflicting files (same name, different content) are handled
+        # The merge should keep the first occurrence and log a warning
+        print("  Testing file access in merged directory...")
+        test_file = run_cmd(["ipfs", "cat", f"{merged_cid}/shared_file.txt"])
+        if not test_file:
+            print("  Error: Could not access shared_file.txt in merged directory")
+            return False, ipfs_proc
+        print(f"  ✓ Can access shared file in merged directory")
+        
+        # Clean up test_fixtures2
+        import shutil
+        shutil.rmtree(test_dir2, ignore_errors=True)
+        # Remove shared_file.txt from test_fixtures
+        (Path("test_fixtures") / "shared_file.txt").unlink(missing_ok=True)
+        
         print("\n🎉 All tests passed!")
         return True, ipfs_proc
     
@@ -212,7 +322,7 @@ def test_pipeline():
 
 def cleanup():
     """Clean up test artifacts"""
-    print("\n4. Cleaning up...")
+    print("\n5. Cleaning up...")
     # Remove test fixtures from local filesystem
     # (IPFS content will remain until GC)
     

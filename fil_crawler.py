@@ -31,10 +31,10 @@ def metadata(cids, file, db):
 @cli.command()
 @click.argument('cids', nargs=-1)
 @click.option('-f', '--file', type=click.Path(exists=True), help='File containing CIDs (plain text or CSV with "cid" column)')
-def files(cids, file):
-    """Process files.xml for each CID"""
+def extract_items(cids, file):
+    """Process files.xml for each CID and create synthetic directories"""
     from files_cmd import run_files
-    
+
     cid_list = []
     if file:
         cid_list = read_cids_from_file(file)
@@ -43,8 +43,26 @@ def files(cids, file):
     else:
         click.echo("Error: Must provide either CIDs as arguments or use --file option", err=True)
         raise click.Abort()
-    
+
     run_files(cid_list)
+
+@cli.command()
+@click.argument('cids', nargs=-1)
+@click.option('-f', '--file', type=click.Path(exists=True), help='File containing CIDs (plain text or CSV with "cid" column)')
+def merge_roots(cids, file):
+    """Merge multiple root CIDs into a single synthetic directory"""
+    from merge_roots_cmd import run_merge_roots
+
+    cid_list = []
+    if file:
+        cid_list = read_cids_from_file(file)
+    elif cids:
+        cid_list = list(cids)
+    else:
+        click.echo("Error: Must provide either CIDs as arguments or use --file option", err=True)
+        raise click.Abort()
+
+    run_merge_roots(cid_list)
 
 if __name__ == "__main__":
     cli()
