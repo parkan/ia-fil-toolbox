@@ -48,4 +48,4 @@ ipfs config --json Import.CidVersion 1
 
 echo "Starting staging IPFS daemon on port 5009 (gateway disabled, custom routing configured)..."
 echo "Press Ctrl+C to stop"
-ipfs daemon --offline
+ipfs daemon

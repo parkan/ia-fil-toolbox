@@ -32,7 +32,7 @@ def metadata(cids, file, db):
 @click.argument('cids', nargs=-1)
 @click.option('-f', '--file', type=click.Path(exists=True), help='File containing CIDs (plain text or CSV with "cid" column)')
 def extract_items(cids, file):
-    """Process files.xml for each CID and create synthetic directories"""
+    """Extract items from _files.xml into directories"""
     from files_cmd import run_files
 
     cid_list = []
@@ -50,7 +50,7 @@ def extract_items(cids, file):
 @click.argument('cids', nargs=-1)
 @click.option('-f', '--file', type=click.Path(exists=True), help='File containing CIDs (plain text or CSV with "cid" column)')
 def merge_roots(cids, file):
-    """Merge multiple root CIDs into a single synthetic directory"""
+    """Merge multiple root CIDs into single directory"""
     from merge_roots_cmd import run_merge_roots
 
     cid_list = []
