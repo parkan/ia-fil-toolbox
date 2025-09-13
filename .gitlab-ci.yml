@@ -1,0 +1,44 @@
+image: python:3.13
+
+variables:
+  # Use uv for fast Python package management
+  UV_CACHE_DIR: ".uv-cache"
+  # IPFS Kubo version to install
+  KUBO_VERSION: "0.37.0"
+
+stages:
+  - test
+
+cache:
+  paths:
+    - .uv-cache/
+
+before_script:
+  # Install uv
+  - curl -LsSf https://astral.sh/uv/install.sh | sh
+  - source $HOME/.cargo/env
+  
+  # Install IPFS (Kubo)
+  - wget https://dist.ipfs.tech/kubo/v${KUBO_VERSION}/kubo_v${KUBO_VERSION}_linux-amd64.tar.gz
+  - tar -xzf kubo_v${KUBO_VERSION}_linux-amd64.tar.gz
+  - cd kubo && ./install.sh && cd ..
+  - export PATH=$PATH:/usr/local/bin
+  
+  # Install Python dependencies
+  - uv sync
+
+test:
+  stage: test
+  script:
+    # Make staging script executable (CLI will use this automatically)
+    - chmod +x staging_ipfs.sh
+    
+    # Run the test suite (CLI handles daemon management automatically)
+    - uv run python test_pipeline.py
+  
+  artifacts:
+    when: on_failure
+    paths:
+      - "*.log"
+      - ".ipfs_staging/logs/"
+    expire_in: 1 week
