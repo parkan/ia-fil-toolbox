@@ -19,7 +19,6 @@ before_script:
   - wget https://dist.ipfs.tech/kubo/v${KUBO_VERSION}/kubo_v${KUBO_VERSION}_linux-amd64.tar.gz
   - tar -xzf kubo_v${KUBO_VERSION}_linux-amd64.tar.gz
   - cd kubo && ./install.sh && cd ..
-  - export PATH=$PATH:/usr/local/bin
   
   # Install Python dependencies
   - uv sync
@@ -28,7 +27,7 @@ test:
   stage: test
   script:
     # Ensure PATH includes /usr/local/bin for this script section
-    - export PATH=$PATH:/usr/local/bin
+    - export PATH=/usr/local/bin:$PATH
     
     # Make staging script executable (CLI will use this automatically)
     - chmod +x staging_ipfs.sh
