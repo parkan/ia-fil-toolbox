@@ -130,7 +130,7 @@ wheels = [
 ]
 
 [[package]]
-name = "fil-meta-crawler"
+name = "ia-fil-toolbox"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

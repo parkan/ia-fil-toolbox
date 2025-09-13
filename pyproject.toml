@@ -1,7 +1,8 @@
 [project]
-name = "fil-meta-crawler"
+name = "ia-fil-toolbox"
 version = "0.1.0"
-description = "Fetch and parse IA-style metadata/files XMLs from an IPFS trustless gateway into SQLite"
+description = "Internet Archive & Filecoin toolbox for metadata crawling, item extraction, and root merging on IPFS DAGs"
+readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     "lxml",
@@ -14,8 +15,8 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project.scripts]
-ia-fetch = "ia_fetch:main"
+ia-fil = "ia_fil:cli"
 
 [tool.setuptools]
-py-modules = ["ia_fetch"]
+py-modules = ["ia_fil", "metadata_cmd", "files_cmd", "merge_roots_cmd", "shared"]
 

@@ -6,7 +6,7 @@ from shared import read_cids_from_file
 
 @click.group()
 def cli():
-    """Filecoin metadata crawler"""
+    """IA item filecoin/IPFS toolbox"""
     pass
 
 @cli.command()

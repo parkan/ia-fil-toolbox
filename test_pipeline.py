@@ -124,7 +124,7 @@ def test_pipeline():
         print(f"\n2. Running extract-items command on {root_cid}...")
         
         # Capture the CSV output
-        result = run_cmd(["python3", "fil_crawler.py", "extract-items", root_cid])
+        result = run_cmd(["python3", "ia_fil.py", "extract-items", root_cid])
         if not result:
             return False, ipfs_proc
         
@@ -259,7 +259,7 @@ def test_pipeline():
         
         # Test merge-roots command
         print(f"  Running merge-roots on {root_cid1_updated} and {root_cid2}...")
-        merge_result = run_cmd(["python3", "fil_crawler.py", "merge-roots", root_cid1_updated, root_cid2])
+        merge_result = run_cmd(["python3", "ia_fil.py", "merge-roots", root_cid1_updated, root_cid2])
         if not merge_result:
             print("  Error: merge-roots command failed")
             return False, ipfs_proc
