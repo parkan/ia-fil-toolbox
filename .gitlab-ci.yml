@@ -26,10 +26,10 @@ before_script:
   
   # Debug: Check environment
   - echo "=== DEBUG INFO ==="
-  - echo "PATH: $PATH"
+  - 'echo "PATH: $PATH"'
   - which ipfs || echo "ipfs not found in PATH"
   - ls -la /usr/local/bin/ipfs || echo "ipfs not at /usr/local/bin/ipfs"
-  - python3 -c "import os; print('Python sees PATH:', os.environ.get('PATH', 'NO PATH'))"
+  - 'python3 -c "import os; print(\"Python sees PATH:\", os.environ.get(\"PATH\", \"NO PATH\"))"'
 
 test:
   stage: test
