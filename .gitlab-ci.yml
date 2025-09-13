@@ -1,4 +1,6 @@
-image: ghcr.io/astral-sh/uv:python3.13-alpine
+image: 
+  name: ghcr.io/astral-sh/uv:python3.13-alpine
+  pull_policy: if-not-present
 
 variables:
   # Use uv for fast Python package management
