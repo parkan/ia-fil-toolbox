@@ -1,7 +1,6 @@
-import json
 import sys
 from typing import List, Dict, Set
-from shared import list_files_with_cids, log_errors, run_ipfs_cmd, pin_cid, gc_repo
+from shared import list_files_with_cids, log_errors, run_ipfs_cmd, pin_cid, gc_repo, create_directory_via_mfs
 
 def merge_root_cids(cids: List[str]) -> str:
     """
@@ -53,41 +52,15 @@ def merge_root_cids(cids: List[str]) -> str:
     
     print(f"  Total unique files: {len(all_files)}", file=sys.stderr)
     
-    # Create links for the synthetic directory
-    links = []
-    for filename, file_cid in sorted(all_files.items()):
-        links.append({
-            "Name": filename,
-            "Hash": {"/": file_cid}
-        })
-    
-    # Create the DAG-JSON structure
-    dag_json = {
-        "Data": {"/": {"bytes": "CAE"}},
-        "Links": links
-    }
-    
-    print(f"  Creating merged directory with {len(links)} files...", file=sys.stderr)
+    print(f"  Creating merged directory with {len(all_files)} files...", file=sys.stderr)
     
     try:
-        # Use ipfs dag put to create the directory
-        result = run_ipfs_cmd([
-            'dag', 'put',
-            '--store-codec=dag-pb',
-            '--input-codec=dag-json'
-        ], input=json.dumps(dag_json), capture_output=True, text=True)
-        
-        if result.returncode == 0:
-            merged_cid = result.stdout.strip()
-            print(f"  ✓ Created merged directory: {merged_cid}", file=sys.stderr)
-            # Pin the merged directory to prevent GC
-            pin_cid(merged_cid)
-            return merged_cid
-        else:
-            print(f"  ✗ Failed to create merged directory: {result.stderr}", file=sys.stderr)
-            error_msg = f"*\t*\tIPFS_ERROR\tFailed to create merged directory: {result.stderr}"
-            log_errors([error_msg])
-            return None
+        # Use MFS for all directory creation - automatically handles dag-pb and HAMT sharding
+        print(f"  Using MFS (auto-HAMT, dag-pb preservation)...", file=sys.stderr)
+        merged_cid = create_directory_via_mfs(all_files, "merge")
+        print(f"  ✓ Created merged directory: {merged_cid}", file=sys.stderr)
+        pin_cid(merged_cid)
+        return merged_cid
             
     except Exception as e:
         print(f"  ✗ Error creating merged directory: {e}", file=sys.stderr)

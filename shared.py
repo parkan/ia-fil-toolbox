@@ -171,15 +171,26 @@ def fetch_xml_files_parallel(cid: str, identifiers: List[str], xml_types: Set[st
     results = {}
     errors = []
     
+    # First, get the mapping of filenames to their CIDs
+    files_with_cids = list_files_with_cids(cid)
+    
     def fetch_single_xml(identifier: str, xml_type: str) -> Tuple[str, str, Optional[bytes]]:
         filename = f"{identifier}_{xml_type}.xml"
         try:
-            content = fetch_file(cid, filename)
-            if content:
-                return identifier, xml_type, content
-            else:
-                errors.append(f"{cid}\t{filename}\tIPFS_ERROR\tFailed to fetch XML file")
+            # Get the specific file CID
+            if filename not in files_with_cids:
+                errors.append(f"{cid}\t{filename}\tDATA_ERROR\tFile not found in directory")
                 return identifier, xml_type, None
+            
+            file_cid = files_with_cids[filename]
+            
+            # Fetch directly by file CID
+            result = run_ipfs_cmd(['cat', file_cid], capture_output=True)
+            if result.returncode != 0:
+                errors.append(f"{cid}\t{filename}\tIPFS_ERROR\tFailed to fetch: {result.stderr}")
+                return identifier, xml_type, None
+            
+            return identifier, xml_type, result.stdout
         except Exception as e:
             errors.append(f"{cid}\t{filename}\tIPFS_ERROR\t{str(e)}")
             return identifier, xml_type, None
@@ -353,3 +364,54 @@ def gc_repo():
             print(f"  ⚠️ GC warning: {result.stderr}", file=sys.stderr)
     except Exception as e:
         print(f"  ⚠️ GC error: {e}", file=sys.stderr)
+
+def create_directory_via_mfs(files_dict: Dict[str, str], name_prefix: str = "dir") -> str:
+    """
+    Create a directory using MFS, which automatically handles HAMT sharding for large directories.
+    MFS preserves the important dag-pb codec properties while handling optimization automatically.
+    
+    Args:
+        files_dict: Dict mapping filename -> file_cid
+        name_prefix: Prefix for the temporary MFS directory name
+        
+    Returns:
+        CID of the created directory (with HAMT sharding if needed)
+    """
+    import uuid
+    
+    # Use unique MFS path to avoid conflicts
+    mfs_path = f'/tmp/{name_prefix}_{uuid.uuid4().hex[:8]}'
+    
+    try:
+        # Create MFS directory
+        result = run_ipfs_cmd([
+            'files', 'mkdir', '-p', mfs_path
+        ], capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to create MFS directory: {result.stderr}")
+        
+        # Copy each file to MFS - MFS automatically handles HAMT sharding and uses dag-pb
+        for filename, file_cid in files_dict.items():
+            result = run_ipfs_cmd([
+                'files', 'cp', f'/ipfs/{file_cid}', f'{mfs_path}/{filename}'
+            ], capture_output=True, text=True)
+            
+            if result.returncode != 0:
+                print(f"    ⚠️ Warning: Failed to add {filename}: {result.stderr}", file=sys.stderr)
+        
+        # Get the final directory CID - MFS will have automatically used dag-pb and sharded if needed
+        result = run_ipfs_cmd([
+            'files', 'stat', '--hash', mfs_path
+        ], capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to get directory CID: {result.stderr}")
+        
+        dir_cid = result.stdout.strip()
+        
+        return dir_cid
+        
+    finally:
+        # Clean up MFS (ignore errors since it might not exist)
+        run_ipfs_cmd(['files', 'rm', '-r', mfs_path], capture_output=True)

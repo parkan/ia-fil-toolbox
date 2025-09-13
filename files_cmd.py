@@ -1,10 +1,10 @@
 import sys
-import json
 import subprocess
 from typing import List, Dict, Any, Tuple, Optional
 from lxml import etree
 from shared import (read_cids_from_file, list_files, list_files_with_cids, log_errors, xml_to_dict,
-                   fetch_xml_files_parallel, validate_xml_completeness, run_ipfs_cmd, pin_cid, gc_repo)
+                   fetch_xml_files_parallel, validate_xml_completeness, run_ipfs_cmd, pin_cid, gc_repo, 
+                   create_directory_via_mfs)
 
 def parse_files_xml(xml_content: bytes) -> List[Dict[str, Any]]:
     files_dict = xml_to_dict(xml_content)
@@ -66,33 +66,21 @@ def create_synthetic_directory(cid: str, identifier: str, files_data: List[Dict[
         print(f"        No valid files found for {identifier}")
         return None
     
-    # Create the DAG-JSON structure
-    dag_json = {
-        "Data": {"/": {"bytes": "CAE"}},
-        "Links": links
-    }
-    
     print(f"      Creating directory with {len(links)} files...")
     
     try:
-        # Use ipfs dag put to create the directory
-        result = run_ipfs_cmd([
-            'dag', 'put',
-            '--store-codec=dag-pb',
-            '--input-codec=dag-json'
-        ], input=json.dumps(dag_json), capture_output=True, text=True)
+        # Convert links to files_dict for MFS
+        files_dict = {}
+        for link in links:
+            files_dict[link["Name"]] = link["Hash"]["/"]
         
-        if result.returncode == 0:
-            dir_cid = result.stdout.strip()
-            print(f"      ✓ Created synthetic directory: {dir_cid}")
-            # Pin the synthetic directory to prevent GC
-            pin_cid(dir_cid)
-            return dir_cid
-        else:
-            print(f"      ✗ Failed to create directory: {result.stderr}")
-            error_msg = f"{cid}\t{identifier}\tIPFS_ERROR\tFailed to create synthetic directory: {result.stderr}"
-            log_errors([error_msg])
-            return None
+        # Use MFS to create directory - automatically handles dag-pb and HAMT sharding
+        dir_cid = create_directory_via_mfs(files_dict, f"item_{identifier}")
+        print(f"      ✓ Created synthetic directory: {dir_cid}")
+        
+        # Pin the synthetic directory to prevent GC
+        pin_cid(dir_cid)
+        return dir_cid
             
     except Exception as e:
         print(f"      ✗ Error creating directory: {e}")

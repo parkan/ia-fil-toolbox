@@ -7,19 +7,19 @@ import tempfile
 import csv
 import time
 import signal
+import unittest
 from pathlib import Path
 
 def run_cmd(cmd, **kwargs):
     """Run command and return result"""
-    print(f"Running: {' '.join(cmd)}")
     env = os.environ.copy()
     env['IPFS_API'] = "http://127.0.0.1:5009"
     env['IPFS_PATH'] = ".ipfs_staging"
     result = subprocess.run(cmd, capture_output=True, text=True, env=env, **kwargs)
     if result.returncode != 0:
-        print(f"Command failed: {result.stderr}", file=sys.stderr)
-        return None
-    return result.stdout.strip()
+        # Return both stdout and stderr for unittest to handle
+        return None, result.stderr
+    return result.stdout.strip(), None
 
 def start_staging_ipfs():
     """Start the staging IPFS daemon"""
@@ -165,7 +165,7 @@ def test_pipeline():
             print(f"\nValidating {identifier} ({synthetic_cid})...")
             
             # List contents of synthetic directory
-            ls_result = run_cmd(["ipfs", "ls", synthetic_cid])
+            ls_result = run_cmd(["ipfs", "ls", "--size=false", "--resolve-type=false", synthetic_cid])
             if not ls_result:
                 print(f"  Error: Could not list {synthetic_cid}")
                 return False, ipfs_proc
@@ -269,7 +269,7 @@ def test_pipeline():
         
         # Validate the merged directory
         print("  Validating merged directory...")
-        ls_merged = run_cmd(["ipfs", "ls", merged_cid])
+        ls_merged = run_cmd(["ipfs", "ls", "--size=false", "--resolve-type=false", merged_cid])
         if not ls_merged:
             print("  Error: Could not list merged CID")
             return False, ipfs_proc
@@ -326,23 +326,168 @@ def cleanup():
     # Remove test fixtures from local filesystem
     # (IPFS content will remain until GC)
     
+class TestIAFilToolbox(unittest.TestCase):
+    """Test suite for ia-fil-toolbox"""
+    
+    @classmethod
+    def setUpClass(cls):
+        """Start IPFS daemon once for all tests"""
+        print("\n=== Starting IPFS daemon ===")
+        cls.ipfs_proc = start_staging_ipfs()
+    
+    @classmethod  
+    def tearDownClass(cls):
+        """Stop IPFS daemon after all tests"""
+        print("\n=== Stopping IPFS daemon ===")
+        if hasattr(cls, 'ipfs_proc') and cls.ipfs_proc:
+            stop_staging_ipfs(cls.ipfs_proc)
+    
+    def setUp(self):
+        """Clean up before each test"""
+        # Remove any leftover files from previous tests
+        (Path("test_fixtures") / "shared_file.txt").unlink(missing_ok=True)
+        import shutil
+        shutil.rmtree("test_fixtures2", ignore_errors=True)
+    
+    def tearDown(self):
+        """Clean up after each test"""
+        # Remove any files created during the test
+        (Path("test_fixtures") / "shared_file.txt").unlink(missing_ok=True)
+        import shutil
+        shutil.rmtree("test_fixtures2", ignore_errors=True)
+    
+    def test_extract_items_command(self):
+        """Test the extract-items command creates synthetic directories correctly"""
+        # Add test fixtures to IPFS
+        result, error = run_cmd(["ipfs", "add", "-r", "--cid-version=1", "test_fixtures"])
+        self.assertIsNotNone(result, f"Failed to add test fixtures: {error}")
+        
+        # Extract root CID
+        root_cid = None
+        for line in result.split('\n'):
+            if line.strip().endswith('test_fixtures'):
+                root_cid = line.split()[1]
+                break
+        self.assertIsNotNone(root_cid, "Could not find root CID")
+        
+        # Run extract-items command  
+        result, error = run_cmd(["python3", "ia_fil.py", "extract-items", root_cid])
+        self.assertIsNotNone(result, f"extract-items command failed: {error}")
+        
+        # Parse CSV output - filter out non-CSV lines (logging output)
+        lines = result.strip().split('\n')
+        csv_lines = [line for line in lines if ',' in line and not line.startswith('  ')]
+        
+        self.assertGreaterEqual(len(csv_lines), 2, "Expected header + data lines in CSV output")
+        self.assertEqual(csv_lines[0], "identifier,synthetic_cid", "Invalid CSV header")
+        
+        # Validate synthetic directories were created
+        synthetic_dirs = {}
+        for line in csv_lines[1:]:
+            identifier, synthetic_cid = line.split(',', 1)
+            synthetic_dirs[identifier] = synthetic_cid
+        
+        self.assertEqual(set(synthetic_dirs.keys()), {'item1', 'item2'}, 
+                        f"Expected synthetic directories for item1 and item2, got {set(synthetic_dirs.keys())}")
+        
+        # Validate each synthetic directory contains expected files
+        for identifier, synthetic_cid in synthetic_dirs.items():
+            with self.subTest(identifier=identifier):
+                # List directory contents
+                ls_result, ls_error = run_cmd(["ipfs", "ls", synthetic_cid])
+                self.assertIsNotNone(ls_result, f"Failed to list {synthetic_cid}: {ls_error}")
+                
+                # Parse file list  
+                files_in_dir = []
+                for line in ls_result.split('\n'):
+                    if line.strip():
+                        parts = line.split()
+                        if len(parts) >= 3:
+                            files_in_dir.append(parts[2])
+                
+                # Check expected files
+                if identifier == 'item1':
+                    expected = {'item1_data.txt', 'item1_doc.pdf'}
+                else:  # item2
+                    expected = {'item2_image.jpg', 'item2_notes.md'}
+                
+                self.assertEqual(set(files_in_dir), expected,
+                               f"Directory {identifier} has wrong files")
+    
+    def test_merge_roots_command(self):
+        """Test the merge-roots command merges multiple CIDs correctly"""
+        # Create two test directories with some overlapping files
+        test_dir2 = Path("test_fixtures2")
+        test_dir2.mkdir(exist_ok=True)
+        
+        try:
+            # Create some files that overlap with test_fixtures and some unique ones
+            (test_dir2 / "item1_doc.pdf").write_text("This is another PDF content")  # Same name, different content
+            (test_dir2 / "item3_data.csv").write_text("col1,col2\na,1\nb,2")  # Unique file
+            (test_dir2 / "shared_file.txt").write_text("This file exists in both")
+            
+            # Add the overlapping content to the first directory too
+            (Path("test_fixtures") / "shared_file.txt").write_text("This file exists in both")
+            
+            # Add both directories to IPFS
+            result1, error1 = run_cmd(["ipfs", "add", "-r", "--cid-version=1", "test_fixtures"])
+            self.assertIsNotNone(result1, f"Failed to add test_fixtures: {error1}")
+            
+            result2, error2 = run_cmd(["ipfs", "add", "-r", "--cid-version=1", str(test_dir2)])
+            self.assertIsNotNone(result2, f"Failed to add test_fixtures2: {error2}")
+            
+            # Extract root CIDs
+            root_cid1 = None
+            for line in result1.split('\n'):
+                if line.strip().endswith('test_fixtures'):
+                    root_cid1 = line.split()[1]
+                    break
+            
+            root_cid2 = None  
+            for line in result2.split('\n'):
+                if line.strip().endswith('test_fixtures2'):
+                    root_cid2 = line.split()[1]
+                    break
+            
+            self.assertIsNotNone(root_cid1, "Could not find root CID for test_fixtures")
+            self.assertIsNotNone(root_cid2, "Could not find root CID for test_fixtures2")
+            
+            # Run merge-roots command
+            merge_result, merge_error = run_cmd(["python3", "ia_fil.py", "merge-roots", root_cid1, root_cid2])
+            self.assertIsNotNone(merge_result, f"merge-roots command failed: {merge_error}")
+            
+            merged_cid = merge_result.strip()
+            self.assertTrue(merged_cid.startswith(('Qm', 'bafy')), f"Invalid CID format: {merged_cid}")
+            
+            # Validate the merged directory contains files from both directories
+            ls_result, ls_error = run_cmd(["ipfs", "ls", merged_cid])
+            self.assertIsNotNone(ls_result, f"Failed to list merged directory {merged_cid}: {ls_error}")
+            
+            merged_files = []
+            for line in ls_result.split('\n'):
+                if line.strip():
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        merged_files.append(parts[2])
+            
+            # Check that we have files from both directories
+            expected_files = {
+                "item1_data.txt", "item1_doc.pdf", "item1_files.xml", "item1_meta.xml",
+                "item2_files.xml", "item2_image.jpg", "item2_meta.xml", "item2_notes.md", 
+                "item3_data.csv", "shared_file.txt"
+            }
+            
+            actual_files = set(merged_files)
+            self.assertTrue(expected_files.issubset(actual_files), 
+                          f"Missing files in merged directory. Expected {expected_files}, got {actual_files}")
+            
+            # Test file access in merged directory
+            test_result, test_error = run_cmd(["ipfs", "cat", f"{merged_cid}/shared_file.txt"])
+            self.assertIsNotNone(test_result, f"Could not access file in merged directory: {test_error}")
+            
+        finally:
+            # tearDown() will handle cleanup
+            pass
+
 if __name__ == "__main__":
-    ipfs_proc = None
-    try:
-        success, ipfs_proc = test_pipeline()
-        if success:
-            print("\n✅ Pipeline test completed successfully")
-            sys.exit(0)
-        else:
-            print("\n❌ Pipeline test failed")
-            sys.exit(1)
-    except KeyboardInterrupt:
-        print("\n⚠️ Test interrupted")
-        sys.exit(1)
-    except Exception as e:
-        print(f"\n💥 Test error: {e}")
-        sys.exit(1)
-    finally:
-        if ipfs_proc:
-            stop_staging_ipfs(ipfs_proc)
-        cleanup()
+    unittest.main(verbosity=2)
