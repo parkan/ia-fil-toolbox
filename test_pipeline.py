@@ -8,7 +8,16 @@ import csv
 import time
 import signal
 import unittest
+import shutil
 from pathlib import Path
+
+# Debug: Check IPFS availability
+env = os.environ.copy()
+print("=== PYTHON DEBUG ===", file=sys.stderr)
+print("PATH=", env.get("PATH", "NO PATH"), file=sys.stderr)
+print("which ipfs =", shutil.which("ipfs", path=env.get("PATH")), file=sys.stderr)
+print("exists+exec:", os.path.exists("/usr/local/bin/ipfs"), os.access("/usr/local/bin/ipfs", os.X_OK), file=sys.stderr)
+print("==================", file=sys.stderr)
 
 def run_cmd(cmd, **kwargs):
     """Run command and return result"""
