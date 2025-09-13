@@ -1,12 +1,10 @@
-image: python:3.13
+image: ghcr.io/astral-sh/uv:python3.13-alpine
 
 variables:
   # Use uv for fast Python package management
   UV_CACHE_DIR: ".uv-cache"
   # IPFS Kubo version to install
   KUBO_VERSION: "0.37.0"
-  # Rust/Cargo cache
-  CARGO_HOME: ".cargo"
 
 stages:
   - test
@@ -14,15 +12,8 @@ stages:
 cache:
   paths:
     - .uv-cache/
-    - .cargo/
 
 before_script:
-  # Install Rust (required for uv)
-  - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-  - source .cargo/env
-  
-  # Install uv via cargo for path consistency
-  - cargo install --git https://github.com/astral-sh/uv uv
   
   # Install IPFS (Kubo)
   - wget https://dist.ipfs.tech/kubo/v${KUBO_VERSION}/kubo_v${KUBO_VERSION}_linux-amd64.tar.gz
