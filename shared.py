@@ -331,15 +331,27 @@ def stop_staging_ipfs():
     if _daemon_process and _daemon_process.poll() is None:
         print("Stopping staging IPFS daemon...", file=sys.stderr)
         try:
-            # Send SIGTERM to the process group
-            os.killpg(os.getpgid(_daemon_process.pid), signal.SIGTERM)
-            _daemon_process.wait(timeout=10)
-        except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
-            # Force kill if graceful shutdown fails
+            # Use ipfs shutdown command for graceful shutdown
+            result = subprocess.run(
+                ['ipfs', '--api', '/ip4/127.0.0.1/tcp/5009', 'shutdown'],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            # Wait for the daemon process to actually exit
+            _daemon_process.wait(timeout=5)
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, ProcessLookupError, OSError):
+            # Fall back to signal-based shutdown if ipfs shutdown fails
             try:
-                os.killpg(os.getpgid(_daemon_process.pid), signal.SIGKILL)
-            except (ProcessLookupError, OSError):
-                pass
+                os.killpg(os.getpgid(_daemon_process.pid), signal.SIGTERM)
+                _daemon_process.wait(timeout=5)
+            except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
+                # Force kill if graceful shutdown fails
+                try:
+                    os.killpg(os.getpgid(_daemon_process.pid), signal.SIGKILL)
+                except (ProcessLookupError, OSError):
+                    pass
+        
         _daemon_process = None
 
 def ensure_staging_ipfs():

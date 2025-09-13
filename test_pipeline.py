@@ -13,6 +13,7 @@ from pathlib import Path
 
 def run_cmd(cmd, **kwargs):
     """Run command and return result"""
+    # Use IPFS_PATH for setup/teardown operations (no daemon needed)
     env = os.environ.copy()
     env['IPFS_PATH'] = ".ipfs_staging"
     result = subprocess.run(cmd, capture_output=True, text=True, env=env, **kwargs)
@@ -303,7 +304,7 @@ class TestIAFilToolbox(unittest.TestCase):
     
     def test_extract_items_command(self):
         """Test the extract-items command creates synthetic directories correctly"""
-        # Add test fixtures to IPFS (repo initialized in before_script)
+        # Add test fixtures to IPFS (using direct repo access, no daemon needed)
         result, error = run_cmd(["ipfs", "add", "-r", "--cid-version=1", "test_fixtures"])
         self.assertIsNotNone(result, f"Failed to add test fixtures: {error}")
         
