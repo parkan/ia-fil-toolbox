@@ -13,7 +13,6 @@ from pathlib import Path
 def run_cmd(cmd, **kwargs):
     """Run command and return result"""
     env = os.environ.copy()
-    env['IPFS_API'] = "http://127.0.0.1:5009"
     env['IPFS_PATH'] = ".ipfs_staging"
     result = subprocess.run(cmd, capture_output=True, text=True, env=env, **kwargs)
     if result.returncode != 0:
@@ -175,8 +174,8 @@ def test_pipeline():
             for line in ls_result.split('\n'):
                 if line.strip():
                     parts = line.split()
-                    if len(parts) >= 3:
-                        files_in_dir.append(parts[2])  # filename is the third part (hash size name)
+                    if len(parts) >= 2:
+                        files_in_dir.append(parts[1])  # filename is the second part (hash name)
             
             print(f"  Files in synthetic directory: {files_in_dir}")
             
@@ -278,8 +277,8 @@ def test_pipeline():
         for line in ls_merged.split('\n'):
             if line.strip():
                 parts = line.split()
-                if len(parts) >= 3:
-                    merged_files.append(parts[2])
+                if len(parts) >= 2:
+                    merged_files.append(parts[1])
         
         print(f"  Files in merged directory: {merged_files}")
         
@@ -394,7 +393,7 @@ class TestIAFilToolbox(unittest.TestCase):
         for identifier, synthetic_cid in synthetic_dirs.items():
             with self.subTest(identifier=identifier):
                 # List directory contents
-                ls_result, ls_error = run_cmd(["ipfs", "ls", synthetic_cid])
+                ls_result, ls_error = run_cmd(["ipfs", "ls", "--size=false", "--resolve-type=false", synthetic_cid])
                 self.assertIsNotNone(ls_result, f"Failed to list {synthetic_cid}: {ls_error}")
                 
                 # Parse file list  
@@ -402,8 +401,8 @@ class TestIAFilToolbox(unittest.TestCase):
                 for line in ls_result.split('\n'):
                     if line.strip():
                         parts = line.split()
-                        if len(parts) >= 3:
-                            files_in_dir.append(parts[2])
+                        if len(parts) >= 2:
+                            files_in_dir.append(parts[1])
                 
                 # Check expected files
                 if identifier == 'item1':
@@ -460,15 +459,15 @@ class TestIAFilToolbox(unittest.TestCase):
             self.assertTrue(merged_cid.startswith(('Qm', 'bafy')), f"Invalid CID format: {merged_cid}")
             
             # Validate the merged directory contains files from both directories
-            ls_result, ls_error = run_cmd(["ipfs", "ls", merged_cid])
+            ls_result, ls_error = run_cmd(["ipfs", "ls", "--size=false", "--resolve-type=false", merged_cid])
             self.assertIsNotNone(ls_result, f"Failed to list merged directory {merged_cid}: {ls_error}")
             
             merged_files = []
             for line in ls_result.split('\n'):
                 if line.strip():
                     parts = line.split()
-                    if len(parts) >= 3:
-                        merged_files.append(parts[2])
+                    if len(parts) >= 2:
+                        merged_files.append(parts[1])
             
             # Check that we have files from both directories
             expected_files = {

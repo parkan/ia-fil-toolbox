@@ -45,7 +45,6 @@ def read_cids_from_file(file_path: str) -> List[str]:
 
 def run_ipfs_cmd(cmd_args: List[str], **kwargs) -> subprocess.CompletedProcess:
     env = os.environ.copy()
-    env['IPFS_API'] = "http://127.0.0.1:5009"
     env['IPFS_PATH'] = ".ipfs_staging"
     return subprocess.run(['ipfs'] + cmd_args, env=env, **kwargs)
 
@@ -286,7 +285,7 @@ def start_staging_ipfs():
         try:
             result = subprocess.run(
                 ["ipfs", "id"],
-                env={**os.environ, "IPFS_API": "http://127.0.0.1:5009", "IPFS_PATH": ".ipfs_staging"},
+                   env={**os.environ, "IPFS_PATH": ".ipfs_staging"},
                 capture_output=True,
                 text=True,
                 timeout=2
@@ -327,7 +326,7 @@ def ensure_staging_ipfs():
         # Test if daemon is already running
         result = subprocess.run(
             ["ipfs", "id"],
-            env={**os.environ, "IPFS_API": "http://127.0.0.1:5009", "IPFS_PATH": ".ipfs_staging"},
+                   env={**os.environ, "IPFS_PATH": ".ipfs_staging"},
             capture_output=True,
             text=True,
             timeout=2
