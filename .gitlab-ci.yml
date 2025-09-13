@@ -19,11 +19,11 @@ cache:
 before_script:
   # Install Rust (required for uv)
   - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-  - source $HOME/.cargo/env
+  - source .cargo/env
   
   # Install uv
   - curl -LsSf https://astral.sh/uv/install.sh | sh
-  - source $HOME/.cargo/env
+  - source .cargo/env
   
   # Install IPFS (Kubo)
   - wget https://dist.ipfs.tech/kubo/v${KUBO_VERSION}/kubo_v${KUBO_VERSION}_linux-amd64.tar.gz
