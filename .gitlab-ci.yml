@@ -23,17 +23,13 @@ before_script:
   
   # Install Python dependencies
   - uv sync
-  
-  # Debug: Check environment
-  - echo "=== DEBUG INFO ==="
-  - 'echo "PATH: $PATH"'
-  - which ipfs || echo "ipfs not found in PATH"
-  - ls -la /usr/local/bin/ipfs || echo "ipfs not at /usr/local/bin/ipfs"
-  - 'python3 -c "import os; print(\"Python sees PATH:\", os.environ.get(\"PATH\", \"NO PATH\"))"'
 
 test:
   stage: test
   script:
+    # Ensure PATH includes /usr/local/bin for this script section
+    - export PATH=$PATH:/usr/local/bin
+    
     # Make staging script executable (CLI will use this automatically)
     - chmod +x staging_ipfs.sh
     
