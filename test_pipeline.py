@@ -11,14 +11,6 @@ import unittest
 import shutil
 from pathlib import Path
 
-# Debug: Check IPFS availability
-env = os.environ.copy()
-print("=== PYTHON DEBUG ===", file=sys.stderr)
-print("PATH=", env.get("PATH", "NO PATH"), file=sys.stderr)
-print("which ipfs =", shutil.which("ipfs", path=env.get("PATH")), file=sys.stderr)
-print("exists+exec:", os.path.exists("/usr/local/bin/ipfs"), os.access("/usr/local/bin/ipfs", os.X_OK), file=sys.stderr)
-print("==================", file=sys.stderr)
-
 def run_cmd(cmd, **kwargs):
     """Run command and return result"""
     env = os.environ.copy()
@@ -311,7 +303,7 @@ class TestIAFilToolbox(unittest.TestCase):
     
     def test_extract_items_command(self):
         """Test the extract-items command creates synthetic directories correctly"""
-        # Let CLI manage daemon - just add test fixtures using the staging daemon
+        # Add test fixtures to IPFS (repo initialized in before_script)
         result, error = run_cmd(["ipfs", "add", "-r", "--cid-version=1", "test_fixtures"])
         self.assertIsNotNone(result, f"Failed to add test fixtures: {error}")
         

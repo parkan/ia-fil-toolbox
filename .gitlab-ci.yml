@@ -23,6 +23,10 @@ before_script:
   
   # Install Python dependencies
   - uv sync
+  
+  # Initialize IPFS repo for tests (same as staging_ipfs.sh)
+  - export IPFS_PATH=".ipfs_staging"
+  - ipfs init --profile=pebbleds
 
 test:
   stage: test
