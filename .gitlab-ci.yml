@@ -5,6 +5,8 @@ variables:
   UV_CACHE_DIR: ".uv-cache"
   # IPFS Kubo version to install
   KUBO_VERSION: "0.37.0"
+  # Rust/Cargo cache
+  CARGO_HOME: ".cargo"
 
 stages:
   - test
@@ -12,8 +14,13 @@ stages:
 cache:
   paths:
     - .uv-cache/
+    - .cargo/
 
 before_script:
+  # Install Rust (required for uv)
+  - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+  - source $HOME/.cargo/env
+  
   # Install uv
   - curl -LsSf https://astral.sh/uv/install.sh | sh
   - source $HOME/.cargo/env
