@@ -21,9 +21,8 @@ before_script:
   - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
   - source .cargo/env
   
-  # Install uv
-  - curl -LsSf https://astral.sh/uv/install.sh | sh
-  - source .cargo/env
+  # Install uv via cargo for path consistency
+  - cargo install --git https://github.com/astral-sh/uv uv
   
   # Install IPFS (Kubo)
   - wget https://dist.ipfs.tech/kubo/v${KUBO_VERSION}/kubo_v${KUBO_VERSION}_linux-amd64.tar.gz
