@@ -12,12 +12,14 @@ from pathlib import Path
 
 def run_cmd(cmd, **kwargs):
     """Run command and return result"""
+    # Inherit full environment and just add IPFS_PATH
     env = os.environ.copy()
     env['IPFS_PATH'] = ".ipfs_staging"
     result = subprocess.run(cmd, capture_output=True, text=True, env=env, **kwargs)
     if result.returncode != 0:
         # Return both stdout and stderr for unittest to handle
-        return None, result.stderr    # Always return stderr for debugging, even on success
+        return None, result.stderr
+    # Always return stderr for debugging, even on success
     return result.stdout.strip(), result.stderr.strip() if result.stderr.strip() else None
 
 # Daemon management is now handled automatically by the CLI

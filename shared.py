@@ -44,6 +44,7 @@ def read_cids_from_file(file_path: str) -> List[str]:
     return cids
 
 def run_ipfs_cmd(cmd_args: List[str], **kwargs) -> subprocess.CompletedProcess:
+    # Inherit full environment and just add IPFS_PATH
     env = os.environ.copy()
     env['IPFS_PATH'] = ".ipfs_staging"
     return subprocess.run(['ipfs'] + cmd_args, env=env, **kwargs)
@@ -283,9 +284,11 @@ def start_staging_ipfs():
     # Wait for daemon to be ready
     for i in range(30):  # Wait up to 30 seconds
         try:
+            env = os.environ.copy()
+            env['IPFS_PATH'] = ".ipfs_staging"
             result = subprocess.run(
                 ["ipfs", "id"],
-                   env={**os.environ, "IPFS_PATH": ".ipfs_staging"},
+                env=env,
                 capture_output=True,
                 text=True,
                 timeout=2
@@ -324,9 +327,11 @@ def ensure_staging_ipfs():
     """Ensure staging IPFS daemon is running, start if needed"""
     try:
         # Test if daemon is already running
+        env = os.environ.copy()
+        env['IPFS_PATH'] = ".ipfs_staging"
         result = subprocess.run(
             ["ipfs", "id"],
-                   env={**os.environ, "IPFS_PATH": ".ipfs_staging"},
+            env=env,
             capture_output=True,
             text=True,
             timeout=2

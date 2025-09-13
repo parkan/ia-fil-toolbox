@@ -5,6 +5,8 @@ variables:
   UV_CACHE_DIR: ".uv-cache"
   # IPFS Kubo version to install
   KUBO_VERSION: "0.37.0"
+  # Ensure IPFS is in PATH for all processes
+  PATH: "$PATH:/usr/local/bin"
 
 stages:
   - test
@@ -19,7 +21,6 @@ before_script:
   - wget https://dist.ipfs.tech/kubo/v${KUBO_VERSION}/kubo_v${KUBO_VERSION}_linux-amd64.tar.gz
   - tar -xzf kubo_v${KUBO_VERSION}_linux-amd64.tar.gz
   - cd kubo && ./install.sh && cd ..
-  - export PATH=$PATH:/usr/local/bin
   
   # Install Python dependencies
   - uv sync
