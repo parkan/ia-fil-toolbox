@@ -6,6 +6,7 @@ requires-python = ">=3.9"
 dependencies = [
     "lxml",
     "requests>=2.32.5",
+    "click>=8.0.0",
 ]
 
 [build-system]

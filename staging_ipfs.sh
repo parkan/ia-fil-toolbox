@@ -42,6 +42,10 @@ ipfs config --json HTTPRetrieval.Enabled true
 # Reprovider: only provide pinned content (no unpinned CIDs)
 ipfs config --json Reprovider.Strategy '"pinned"'
 
+# Use CIDv1 by default for Filecoin compatibility
+ipfs config --json Datastore.StorageMax '"10GB"'
+ipfs config --json Import.CidVersion 1
+
 echo "Starting staging IPFS daemon on port 5009 (gateway disabled, custom routing configured)..."
 echo "Press Ctrl+C to stop"
 ipfs daemon --offline

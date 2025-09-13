@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<files>
+  <file name="item1_doc.pdf" source="original">
+    <mtime>1704067200</mtime>
+    <size>12345</size>
+    <md5>abc123def456</md5>
+    <crc32>12345678</crc32>
+    <sha1>abcdef1234567890abcdef1234567890abcdef12</sha1>
+    <format>PDF</format>
+  </file>
+  <file name="item1_data.txt" source="original">
+    <mtime>1704067300</mtime>
+    <size>678</size>
+    <md5>def456ghi789</md5>
+    <crc32>87654321</crc32>
+    <sha1>1234567890abcdef1234567890abcdef12345678</sha1>
+    <format>Text</format>
+  </file>
+</files>

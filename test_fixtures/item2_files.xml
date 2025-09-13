@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<files>
+  <file name="item2_image.jpg" source="original">
+    <mtime>1704153600</mtime>
+    <size>987654</size>
+    <md5>ghi789jkl012</md5>
+    <crc32>11223344</crc32>
+    <sha1>fedcba0987654321fedcba0987654321fedcba09</sha1>
+    <format>JPEG</format>
+  </file>
+  <file name="item2_notes.md" source="derivative">
+    <mtime>1704153700</mtime>
+    <size>2048</size>
+    <md5>jkl012mno345</md5>
+    <crc32>44332211</crc32>
+    <sha1>0987654321fedcba0987654321fedcba09876543</sha1>
+    <format>Markdown</format>
+  </file>
+</files>
