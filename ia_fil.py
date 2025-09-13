@@ -2,12 +2,17 @@
 
 import click
 from typing import List
-from shared import read_cids_from_file
+from shared import read_cids_from_file, ensure_staging_ipfs
 
 @click.group()
-def cli():
+@click.pass_context
+def cli(ctx):
     """IA item filecoin/IPFS toolbox"""
-    pass
+    # Ensure daemon is running for all commands
+    ensure_staging_ipfs()
+    
+    # Ensure context object exists for cleanup
+    ctx.ensure_object(dict)
 
 @cli.command()
 @click.argument('cids', nargs=-1)

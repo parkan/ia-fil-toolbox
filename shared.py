@@ -5,6 +5,9 @@ import subprocess
 import sqlite3
 import datetime
 import concurrent.futures
+import time
+import signal
+import atexit
 from typing import List, Optional, Dict, Any, Tuple, Set
 from lxml import etree
 
@@ -241,3 +244,112 @@ def validate_xml_completeness(cid: str, identifiers: List[str], results: Dict[st
         log_errors(errors)
     
     return valid_identifiers
+
+# Global variable to track daemon process
+_daemon_process = None
+
+def start_staging_ipfs():
+    """Start the staging IPFS daemon and wait for it to be ready"""
+    global _daemon_process
+    
+    if _daemon_process and _daemon_process.poll() is None:
+        # Daemon is already running
+        return _daemon_process
+    
+    print("Starting staging IPFS daemon...", file=sys.stderr)
+    
+    # Start the staging IPFS script
+    _daemon_process = subprocess.Popen(
+        ["./staging_ipfs.sh"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        preexec_fn=os.setsid  # Create new process group for clean shutdown
+    )
+    
+    # Register cleanup function
+    atexit.register(stop_staging_ipfs)
+    
+    # Wait for daemon to be ready
+    for i in range(30):  # Wait up to 30 seconds
+        try:
+            result = subprocess.run(
+                ["ipfs", "id"],
+                env={**os.environ, "IPFS_API": "http://127.0.0.1:5009", "IPFS_PATH": ".ipfs_staging"},
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            if result.returncode == 0:
+                print("Staging IPFS daemon ready", file=sys.stderr)
+                return _daemon_process
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
+            pass
+        
+        time.sleep(1)
+    
+    # If we get here, daemon failed to start
+    stop_staging_ipfs()
+    raise RuntimeError("Failed to start staging IPFS daemon")
+
+def stop_staging_ipfs():
+    """Stop the staging IPFS daemon"""
+    global _daemon_process
+    
+    if _daemon_process and _daemon_process.poll() is None:
+        print("Stopping staging IPFS daemon...", file=sys.stderr)
+        try:
+            # Send SIGTERM to the process group
+            os.killpg(os.getpgid(_daemon_process.pid), signal.SIGTERM)
+            _daemon_process.wait(timeout=10)
+        except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
+            # Force kill if graceful shutdown fails
+            try:
+                os.killpg(os.getpgid(_daemon_process.pid), signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                pass
+        _daemon_process = None
+
+def ensure_staging_ipfs():
+    """Ensure staging IPFS daemon is running, start if needed"""
+    try:
+        # Test if daemon is already running
+        result = subprocess.run(
+            ["ipfs", "id"],
+            env={**os.environ, "IPFS_API": "http://127.0.0.1:5009", "IPFS_PATH": ".ipfs_staging"},
+            capture_output=True,
+            text=True,
+            timeout=2
+        )
+        if result.returncode == 0:
+            return  # Already running
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
+        pass
+    
+    # Start the daemon
+    start_staging_ipfs()
+
+def pin_cid(cid: str) -> bool:
+    """Pin a CID in the staging IPFS node"""
+    try:
+        result = run_ipfs_cmd(['pin', 'add', cid], capture_output=True, text=True)
+        if result.returncode == 0:
+            print(f"  ✓ Pinned {cid}", file=sys.stderr)
+            return True
+        else:
+            print(f"  ⚠️ Failed to pin {cid}: {result.stderr}", file=sys.stderr)
+            return False
+    except Exception as e:
+        print(f"  ⚠️ Error pinning {cid}: {e}", file=sys.stderr)
+        return False
+
+def gc_repo():
+    """Run garbage collection on the staging IPFS repo"""
+    try:
+        result = run_ipfs_cmd(['repo', 'gc', '--quiet'], capture_output=True, text=True)
+        if result.returncode == 0:
+            print("  ✓ Cleaned up temporary blocks", file=sys.stderr)
+        else:
+            print(f"  ⚠️ GC warning: {result.stderr}", file=sys.stderr)
+    except Exception as e:
+        print(f"  ⚠️ GC error: {e}", file=sys.stderr)

@@ -109,17 +109,6 @@ def run_metadata(cids: List[str], db_path: str):
             processor.process_cid(cid)
         except Exception as e:
             print(f"Error processing {cid}: {e}", file=sys.stderr)
-        finally:
-            env = os.environ.copy()
-            env['IPFS_API'] = "http://127.0.0.1:5009"
-            env['IPFS_PATH'] = ".ipfs_staging"
-            import subprocess
-            import os
-            try:
-                subprocess.run(['ipfs', 'repo', 'gc', '--quiet'], 
-                             env=env, capture_output=True, check=True)
-            except subprocess.CalledProcessError as gc_error:
-                print(f"  Warning: IPFS GC failed: {gc_error}", file=sys.stderr)
     
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()

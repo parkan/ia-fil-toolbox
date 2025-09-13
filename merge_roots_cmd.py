@@ -1,7 +1,7 @@
 import json
 import sys
 from typing import List, Dict, Set
-from shared import list_files_with_cids, log_errors, run_ipfs_cmd
+from shared import list_files_with_cids, log_errors, run_ipfs_cmd, pin_cid, gc_repo
 
 def merge_root_cids(cids: List[str]) -> str:
     """
@@ -80,6 +80,8 @@ def merge_root_cids(cids: List[str]) -> str:
         if result.returncode == 0:
             merged_cid = result.stdout.strip()
             print(f"  ✓ Created merged directory: {merged_cid}", file=sys.stderr)
+            # Pin the merged directory to prevent GC
+            pin_cid(merged_cid)
             return merged_cid
         else:
             print(f"  ✗ Failed to create merged directory: {result.stderr}", file=sys.stderr)
@@ -110,6 +112,8 @@ def run_merge_roots(cids: List[str]):
     
     if merged_cid:
         print(merged_cid)  # Output just the CID for easy scripting
+        # Clean up temporary blocks after pinning what we want to keep
+        gc_repo()
     else:
         print("Error: Failed to create merged directory", file=sys.stderr)
         sys.exit(1)

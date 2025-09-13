@@ -3,8 +3,8 @@ import json
 import subprocess
 from typing import List, Dict, Any, Tuple, Optional
 from lxml import etree
-from shared import (read_cids_from_file, list_files, list_files_with_cids, log_errors, xml_to_dict, 
-                   fetch_xml_files_parallel, validate_xml_completeness, run_ipfs_cmd)
+from shared import (read_cids_from_file, list_files, list_files_with_cids, log_errors, xml_to_dict,
+                   fetch_xml_files_parallel, validate_xml_completeness, run_ipfs_cmd, pin_cid, gc_repo)
 
 def parse_files_xml(xml_content: bytes) -> List[Dict[str, Any]]:
     files_dict = xml_to_dict(xml_content)
@@ -85,6 +85,8 @@ def create_synthetic_directory(cid: str, identifier: str, files_data: List[Dict[
         if result.returncode == 0:
             dir_cid = result.stdout.strip()
             print(f"      ✓ Created synthetic directory: {dir_cid}")
+            # Pin the synthetic directory to prevent GC
+            pin_cid(dir_cid)
             return dir_cid
         else:
             print(f"      ✗ Failed to create directory: {result.stderr}")
@@ -189,10 +191,16 @@ def process_cid_files(cid: str) -> List[Tuple[str, str]]:
 def run_files(cids: List[str]):
     print("identifier,synthetic_cid")  # CSV header
     
+    any_results = False
     for cid in cids:
         try:
             results = process_cid_files(cid)
             for identifier, synthetic_cid in results:
                 print(f"{identifier},{synthetic_cid}")
+                any_results = True
         except Exception as e:
             print(f"Error processing {cid}: {e}", file=sys.stderr)
+    
+    # Clean up temporary blocks after pinning what we want to keep
+    if any_results:
+        gc_repo()
