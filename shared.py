@@ -44,9 +44,8 @@ def read_cids_from_file(file_path: str) -> List[str]:
     return cids
 
 def run_ipfs_cmd(cmd_args: List[str], **kwargs) -> subprocess.CompletedProcess:
-    env = os.environ.copy()
-    env['IPFS_PATH'] = ".ipfs_staging"
-    return subprocess.run(['ipfs'] + cmd_args, env=env, **kwargs)
+    # Use --api flag to connect to staging daemon instead of accessing repo directly
+    return subprocess.run(['ipfs', '--api', '/ip4/127.0.0.1/tcp/5009'] + cmd_args, **kwargs)
 
 def list_files(cid: str) -> List[str]:
     result = run_ipfs_cmd(
@@ -178,20 +177,23 @@ def fetch_xml_files_parallel(cid: str, identifiers: List[str], xml_types: Set[st
         try:
             # Get the specific file CID
             if filename not in files_with_cids:
-                errors.append(f"{cid}\t{filename}\tDATA_ERROR\tFile not found in directory")
+                error_msg = f"{cid}\t{filename}\tDATA_ERROR\tFile not found in directory"
+                errors.append(error_msg)
                 return identifier, xml_type, None
             
             file_cid = files_with_cids[filename]
             
-            # Fetch directly by file CID
+            # Fetch directly by file CID via HTTP API
             result = run_ipfs_cmd(['cat', file_cid], capture_output=True)
             if result.returncode != 0:
-                errors.append(f"{cid}\t{filename}\tIPFS_ERROR\tFailed to fetch: {result.stderr}")
+                error_msg = f"{cid}\t{filename}\tIPFS_ERROR\tFailed to fetch: {result.stderr}"
+                errors.append(error_msg)
                 return identifier, xml_type, None
             
             return identifier, xml_type, result.stdout
         except Exception as e:
-            errors.append(f"{cid}\t{filename}\tIPFS_ERROR\t{str(e)}")
+            error_msg = f"{cid}\t{filename}\tIPFS_ERROR\t{str(e)}"
+            errors.append(error_msg)
             return identifier, xml_type, None
     
     tasks = []
@@ -199,19 +201,25 @@ def fetch_xml_files_parallel(cid: str, identifiers: List[str], xml_types: Set[st
         for xml_type in xml_types:
             tasks.append((identifier, xml_type))
     
+    # Use ThreadPoolExecutor for parallel fetching via HTTP API
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
         futures = {executor.submit(fetch_single_xml, ident, xml_type): (ident, xml_type) 
                   for ident, xml_type in tasks}
         
         for future in concurrent.futures.as_completed(futures):
-            identifier, xml_type, content = future.result()
-            if content:
-                if identifier not in results:
-                    results[identifier] = {}
-                results[identifier][xml_type] = content
-                print(f"    ✓ Fetched {identifier}_{xml_type}.xml")
-            else:
-                print(f"    ✗ Failed to fetch {identifier}_{xml_type}.xml", file=sys.stderr)
+            ident, xml_type = futures[future]
+            try:
+                identifier_result, xml_type_result, content = future.result()
+                if content:
+                    if identifier_result not in results:
+                        results[identifier_result] = {}
+                    results[identifier_result][xml_type_result] = content
+                    print(f"    ✓ Fetched {identifier_result}_{xml_type_result}.xml", file=sys.stderr)
+                else:
+                    print(f"    ✗ Failed to fetch {identifier_result}_{xml_type_result}.xml", file=sys.stderr)
+            except Exception as e:
+                print(f"    ✗ Exception fetching {ident}_{xml_type}.xml: {e}", file=sys.stderr)
+                errors.append(f"{cid}\t{ident}_{xml_type}.xml\tTHREAD_ERROR\tException in thread: {str(e)}")
     
     if errors:
         log_errors(errors)
@@ -276,6 +284,8 @@ def start_staging_ipfs():
         text=True,
         preexec_fn=os.setsid  # Create new process group for clean shutdown
     )
+
+    time.sleep(5)
     
     # Register cleanup function
     atexit.register(stop_staging_ipfs)
@@ -283,19 +293,7 @@ def start_staging_ipfs():
     # Wait for daemon to be ready
     for i in range(30):  # Wait up to 30 seconds
         try:
-            env = os.environ.copy()
-            env['IPFS_PATH'] = ".ipfs_staging"
-            # Explicitly ensure /usr/local/bin is in PATH for subprocess
-            current_path = env.get('PATH', '')
-            if '/usr/local/bin' not in current_path:
-                env['PATH'] = f"/usr/local/bin:{current_path}"
-            result = subprocess.run(
-                ["ipfs", "id"],
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=2
-            )
+            result = run_ipfs_cmd(["id"], capture_output=True, text=True, timeout=2)
             if result.returncode == 0:
                 print("Staging IPFS daemon ready", file=sys.stderr)
                 return _daemon_process
