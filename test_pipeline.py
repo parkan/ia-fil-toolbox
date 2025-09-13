@@ -12,13 +12,8 @@ from pathlib import Path
 
 def run_cmd(cmd, **kwargs):
     """Run command and return result"""
-    # Inherit full environment and ensure /usr/local/bin is in PATH
     env = os.environ.copy()
     env['IPFS_PATH'] = ".ipfs_staging"
-    # Explicitly ensure /usr/local/bin is in PATH for subprocess
-    current_path = env.get('PATH', '')
-    if '/usr/local/bin' not in current_path:
-        env['PATH'] = f"/usr/local/bin:{current_path}"
     result = subprocess.run(cmd, capture_output=True, text=True, env=env, **kwargs)
     if result.returncode != 0:
         # Return both stdout and stderr for unittest to handle

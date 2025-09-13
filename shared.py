@@ -44,13 +44,8 @@ def read_cids_from_file(file_path: str) -> List[str]:
     return cids
 
 def run_ipfs_cmd(cmd_args: List[str], **kwargs) -> subprocess.CompletedProcess:
-    # Inherit full environment and ensure /usr/local/bin is in PATH
     env = os.environ.copy()
     env['IPFS_PATH'] = ".ipfs_staging"
-    # Explicitly ensure /usr/local/bin is in PATH for subprocess
-    current_path = env.get('PATH', '')
-    if '/usr/local/bin' not in current_path:
-        env['PATH'] = f"/usr/local/bin:{current_path}"
     return subprocess.run(['ipfs'] + cmd_args, env=env, **kwargs)
 
 def list_files(cid: str) -> List[str]:
@@ -337,10 +332,6 @@ def ensure_staging_ipfs():
         # Test if daemon is already running
         env = os.environ.copy()
         env['IPFS_PATH'] = ".ipfs_staging"
-        # Explicitly ensure /usr/local/bin is in PATH for subprocess
-        current_path = env.get('PATH', '')
-        if '/usr/local/bin' not in current_path:
-            env['PATH'] = f"/usr/local/bin:{current_path}"
         result = subprocess.run(
             ["ipfs", "id"],
             env=env,
