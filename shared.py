@@ -68,30 +68,51 @@ def list_files(cid: str) -> List[str]:
 
 def list_files_with_cids(cid: str) -> Dict[str, str]:
     """
-    List files in a CID with their individual CIDs
+    List files in a CID with their individual CIDs, recursively walking subdirectories
     
     Returns:
-        Dict mapping filename -> file_cid
+        Dict mapping full_path -> file_cid (e.g., "subdir/file.txt" -> "bafk...")
     """
-    result = run_ipfs_cmd(
-        ['ls', '--resolve-type=false', '--size=false', cid],
-        capture_output=True,
-        text=True
-    )
-    if result.returncode != 0:
-        print(f"  Failed to list {cid}: {result.stderr}", file=sys.stderr)
-        return {}
+    def walk_directory(dir_cid: str, path_prefix: str = "") -> Dict[str, str]:
+        """Recursively walk an IPFS directory"""
+        result = run_ipfs_cmd(
+            ['ls', '--resolve-type=false', '--size=false', dir_cid],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode != 0:
+            print(f"  Failed to list {dir_cid}: {result.stderr}", file=sys.stderr)
+            return {}
+        
+        files = {}
+        for line in result.stdout.strip().split('\n'):
+            if not line:
+                continue
+            parts = line.split(maxsplit=1)
+            if len(parts) == 2:
+                item_cid = parts[0]
+                item_name = parts[1]
+                full_path = f"{path_prefix}{item_name}" if path_prefix else item_name
+                
+                # Check if this is a directory by trying to list it
+                # If it fails, it's a file
+                subdir_result = run_ipfs_cmd(
+                    ['ls', '--resolve-type=false', '--size=false', item_cid],
+                    capture_output=True,
+                    text=True
+                )
+                
+                if subdir_result.returncode == 0 and subdir_result.stdout.strip():
+                    # It's a directory, recurse into it
+                    subdir_files = walk_directory(item_cid, f"{full_path}/")
+                    files.update(subdir_files)
+                else:
+                    # It's a file
+                    files[full_path] = item_cid
+        
+        return files
     
-    files = {}
-    for line in result.stdout.strip().split('\n'):
-        if not line:
-            continue
-        parts = line.split(maxsplit=1)
-        if len(parts) == 2:
-            file_cid = parts[0]
-            filename = parts[1]
-            files[filename] = file_cid
-    return files
+    return walk_directory(cid)
 
 def fetch_file(cid: str, filename: str) -> Optional[bytes]:
     try:

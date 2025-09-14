@@ -37,7 +37,7 @@ def create_synthetic_directory(cid: str, identifier: str, files_data: List[Dict[
     Returns:
         CID of the created directory, or None if failed
     """
-    print(f"      Creating synthetic directory for {identifier}")
+    print(f"      Creating synthetic directory for {identifier}", file=sys.stderr)
     
     # Build the DAG-JSON structure for the directory
     links = []
@@ -60,13 +60,13 @@ def create_synthetic_directory(cid: str, identifier: str, files_data: List[Dict[
             "Name": file_name,
             "Hash": {"/": file_cid}
         })
-        print(f"        ✓ {file_name} -> {file_cid}")
+        print(f"        ✓ {file_name} -> {file_cid}", file=sys.stderr)
     
     if not links:
-        print(f"        No valid files found for {identifier}")
+        print(f"        No valid files found for {identifier}", file=sys.stderr)
         return None
     
-    print(f"      Creating directory with {len(links)} files...")
+    print(f"      Creating directory with {len(links)} files...", file=sys.stderr)
     
     try:
         # Convert links to files_dict for MFS
@@ -101,25 +101,25 @@ def process_file_list(cid: str, identifier: str, files_data: List[Dict[str, Any]
     Returns:
         CID of synthetic directory if successful, None if failed
     """
-    print(f"      Processing {len(files_data)} files for {identifier}")
+    print(f"      Processing {len(files_data)} files for {identifier}", file=sys.stderr)
     
     synthetic_cid = create_synthetic_directory(cid, identifier, files_data, available_files)
     
     if synthetic_cid:
-        print(f"      🎯 Synthetic directory created: {synthetic_cid}")
+        print(f"      🎯 Synthetic directory created: {synthetic_cid}", file=sys.stderr)
         return synthetic_cid
     else:
-        print(f"      ⚠ Failed to create synthetic directory for {identifier}")
+        print(f"      ⚠ Failed to create synthetic directory for {identifier}", file=sys.stderr)
         return None
 
 def process_cid_files(cid: str) -> List[Tuple[str, str]]:
     """
     Process files for a CID and return list of (identifier, synthetic_cid) tuples
     """
-    print(f"\nProcessing files for CID: {cid}")
+    print(f"\nProcessing files for CID: {cid}", file=sys.stderr)
     results = []
     
-    print("  Listing files...")
+    print("  Listing files...", file=sys.stderr)
     all_files = list_files_with_cids(cid)
     if not all_files:
         error_msg = f"{cid}\t*\tIPFS_ERROR\tNo files found or failed to list files"
@@ -138,29 +138,29 @@ def process_cid_files(cid: str) -> List[Tuple[str, str]]:
     files_identifiers = {f.replace('_files.xml', '') for f in files_files}
     all_identifiers = list(meta_identifiers | files_identifiers)
     
-    print(f"  Found {len(meta_files)} meta files and {len(files_files)} files.xml")
-    print(f"  Processing {len(all_identifiers)} identifiers")
+    print(f"  Found {len(meta_files)} meta files and {len(files_files)} files.xml", file=sys.stderr)
+    print(f"  Processing {len(all_identifiers)} identifiers", file=sys.stderr)
     
-    print("  Fetching XML files...")
+    print("  Fetching XML files...", file=sys.stderr)
     xml_results = fetch_xml_files_parallel(cid, all_identifiers, {'meta', 'files'})
     
-    print("  Validating completeness...")
+    print("  Validating completeness...", file=sys.stderr)
     valid_identifiers = validate_xml_completeness(cid, all_identifiers, xml_results, {'meta', 'files'})
     
     if not valid_identifiers:
-        print("  No complete meta/files pairs found")
+        print("  No complete meta/files pairs found", file=sys.stderr)
         return results
     
-    print(f"  Processing {len(valid_identifiers)} complete pairs...")
+    print(f"  Processing {len(valid_identifiers)} complete pairs...", file=sys.stderr)
     
     for identifier in valid_identifiers:
-        print(f"    Processing {identifier}...")
+        print(f"    Processing {identifier}...", file=sys.stderr)
         
         files_content = xml_results[identifier]['files']
         
         try:
             files_data = parse_files_xml(files_content)
-            print(f"      Found {len(files_data)} files in files.xml")
+            print(f"      Found {len(files_data)} files in files.xml", file=sys.stderr)
             
             synthetic_cid = process_file_list(cid, identifier, files_data, all_files)
             if synthetic_cid:
@@ -173,22 +173,24 @@ def process_cid_files(cid: str) -> List[Tuple[str, str]]:
             error_msg = f"{cid}\t{identifier}\tDATA_ERROR\t{str(e)}"
             log_errors([error_msg])
     
-    print(f"  Completed {cid}")
+    print(f"  Completed {cid}", file=sys.stderr)
     return results
 
 def run_files(cids: List[str]):
-    print("identifier,synthetic_cid")  # CSV header
+    all_results = []
     
-    any_results = False
     for cid in cids:
         try:
             results = process_cid_files(cid)
-            for identifier, synthetic_cid in results:
-                print(f"{identifier},{synthetic_cid}")
-                any_results = True
+            all_results.extend(results)
         except Exception as e:
             print(f"Error processing {cid}: {e}", file=sys.stderr)
     
-    # Clean up temporary blocks after pinning what we want to keep
-    if any_results:
+    # Only print CSV header and results if we have any
+    if all_results:
+        print("identifier,synthetic_cid")  # CSV header
+        for identifier, synthetic_cid in all_results:
+            print(f"{identifier},{synthetic_cid}")
+        
+        # Clean up temporary blocks after pinning what we want to keep
         gc_repo()
