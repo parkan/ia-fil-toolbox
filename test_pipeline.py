@@ -363,12 +363,58 @@ class TestIAFilToolbox(unittest.TestCase):
                 
                 # Check expected files
                 if identifier == 'item1':
-                    expected = {'item1_data.txt', 'item1_doc.pdf'}
+                    expected = {'item1_data.txt', 'item1_doc.pdf', 'subdir/nested_file.txt', 'videos.thumbs/thumb_001.jpg'}
                 else:  # item2
                     expected = {'item2_image.jpg', 'item2_notes.md'}
                 
                 self.assertEqual(set(files_in_dir), expected,
                                f"Directory {identifier} has wrong files")
+    
+    def test_subdirectory_handling(self):
+        """Test that subdirectories are handled correctly in recursive file listing"""
+        # Add test fixtures to IPFS (using direct repo access, no daemon needed)
+        result, error = run_cmd(["ipfs", "add", "-r", "--cid-version=1", "test_fixtures"])
+        self.assertIsNotNone(result, f"Failed to add test fixtures: {error}")
+        
+        # Extract root CID
+        root_cid = None
+        for line in result.split('\n'):
+            if line.strip().endswith('test_fixtures'):
+                root_cid = line.split()[1]
+                break
+        self.assertIsNotNone(root_cid, "Could not find root CID")
+        
+        # Test recursive file listing
+        from shared import list_files_with_cids
+        files_with_cids = list_files_with_cids(root_cid)
+        
+        # Check that subdirectory files are found with their full paths
+        expected_files = {
+            "item1_doc.pdf",
+            "item1_data.txt", 
+            "item1_files.xml",
+            "item1_meta.xml",
+            "item2_files.xml",
+            "item2_image.jpg",
+            "item2_meta.xml", 
+            "item2_notes.md",
+            "subdir/nested_file.txt",  # File in subdirectory
+            "videos.thumbs/thumb_001.jpg",  # File in subdirectory
+            "videos.thumbs/thumb_002.jpg"   # File in subdirectory
+        }
+        
+        found_files = set(files_with_cids.keys())
+        self.assertEqual(found_files, expected_files, 
+                        f"Expected files: {expected_files}, got: {found_files}")
+        
+        # Verify that subdirectory files have valid CIDs
+        self.assertIn("subdir/nested_file.txt", files_with_cids)
+        self.assertIn("videos.thumbs/thumb_001.jpg", files_with_cids)
+        self.assertIn("videos.thumbs/thumb_002.jpg", files_with_cids)
+        
+        # Verify CIDs are valid (start with 'bafk' for CIDv1)
+        for path, cid in files_with_cids.items():
+            self.assertTrue(cid.startswith('bafk'), f"Invalid CID for {path}: {cid}")
     
     def test_merge_roots_command(self):
         """Test the merge-roots command merges multiple CIDs correctly"""

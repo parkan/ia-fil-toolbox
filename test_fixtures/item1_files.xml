@@ -16,4 +16,20 @@
     <sha1>1234567890abcdef1234567890abcdef12345678</sha1>
     <format>Text</format>
   </file>
+  <file name="subdir/nested_file.txt" source="original">
+    <mtime>1704067400</mtime>
+    <size>20</size>
+    <md5>nested123</md5>
+    <crc32>99999999</crc32>
+    <sha1>nested1234567890abcdef1234567890abcdef123</sha1>
+    <format>Text</format>
+  </file>
+  <file name="videos.thumbs/thumb_001.jpg" source="derivative">
+    <mtime>1704067500</mtime>
+    <size>18</size>
+    <md5>thumb001</md5>
+    <crc32>11111111</crc32>
+    <sha1>thumb001234567890abcdef1234567890abcdef123</sha1>
+    <format>JPEG</format>
+  </file>
 </files>
