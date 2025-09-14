@@ -297,53 +297,38 @@ def start_staging_ipfs():
     
     print("Starting staging IPFS daemon...", file=sys.stderr)
     
-    # Check for existing lock file and warn user
-    import os
-    lock_file = ".ipfs_staging/repo.lock"
-    if os.path.exists(lock_file):
-        print(f"Warning: Lock file exists at {lock_file}", file=sys.stderr)
-        print("This may indicate another IPFS daemon is running or was not shut down cleanly.", file=sys.stderr)
-        print("If you're sure no other daemon is running, you can manually remove the lock file.", file=sys.stderr)
-        raise RuntimeError(f"IPFS repository is locked. Lock file: {lock_file}")
+    # Use the Python-based daemon startup
+    from daemon_cmd import initialize_repo, configure_ipfs, start_daemon
     
-    # Start the staging IPFS script
-    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "staging_ipfs.sh")
+    # Initialize repo if needed
+    if not initialize_repo():
+        raise RuntimeError("Failed to initialize IPFS repository")
     
-    _daemon_process = subprocess.Popen(
-        [script_path],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        preexec_fn=os.setsid  # Create new process group for clean shutdown
-    )
-
+    # Configure IPFS
+    configure_ipfs()
+    
+    # Start daemon and get PID
+    daemon_pid = start_daemon()
+    if not daemon_pid:
+        raise RuntimeError("Failed to start staging IPFS daemon")
+    
+    # Create a dummy process object to maintain compatibility with existing code
+    class DaemonProcess:
+        def __init__(self, pid):
+            self.pid = pid
+        def poll(self):
+            try:
+                os.kill(self.pid, 0)
+                return None  # Process is running
+            except OSError:
+                return 1  # Process is dead
+    
+    _daemon_process = DaemonProcess(daemon_pid)
+    
     # Register cleanup function
     atexit.register(stop_staging_ipfs)
     
-    # Wait for daemon to be ready by checking API directly (not using our wrapper to avoid recursion)
-    for i in range(30):  # Wait up to 30 seconds
-        try:
-            result = subprocess.run(
-                ['ipfs', '--api', '/ip4/127.0.0.1/tcp/5009', 'id'],
-                capture_output=True,
-                text=True,
-                timeout=2
-            )
-            if result.returncode == 0:
-                print("Staging IPFS daemon ready", file=sys.stderr)
-                return _daemon_process
-        except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
-            pass
-        
-        # Check if process is still alive
-        if _daemon_process.poll() is not None:
-            break
-            
-        time.sleep(1)
-    
-    # If we get here, daemon failed to start
-    stop_staging_ipfs()
-    raise RuntimeError("Failed to start staging IPFS daemon")
+    return _daemon_process
 
 def stop_staging_ipfs():
     """Stop the staging IPFS daemon"""

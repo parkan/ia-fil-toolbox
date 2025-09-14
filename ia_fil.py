@@ -8,8 +8,9 @@ from shared import read_cids_from_file, ensure_staging_ipfs
 @click.pass_context
 def cli(ctx):
     """IA item filecoin/IPFS toolbox"""
-    # Ensure daemon is running for all commands
-    ensure_staging_ipfs()
+    # Ensure daemon is running for all commands (except daemon management commands)
+    if ctx.invoked_subcommand not in ['start-daemons', 'stop-daemons', 'daemon-status']:
+        ensure_staging_ipfs()
     
     # Ensure context object exists for cleanup
     ctx.ensure_object(dict)
@@ -68,6 +69,24 @@ def merge_roots(cids, file):
         raise click.Abort()
 
     run_merge_roots(cid_list)
+
+@cli.command()
+def start_daemons():
+    """Start IPFS staging daemon"""
+    from daemon_cmd import run_start_daemons
+    run_start_daemons()
+
+@cli.command()
+def stop_daemons():
+    """Stop IPFS staging daemon"""
+    from daemon_cmd import run_stop_daemons
+    run_stop_daemons()
+
+@cli.command()
+def daemon_status():
+    """Check IPFS daemon status"""
+    from daemon_cmd import run_daemon_status
+    run_daemon_status()
 
 if __name__ == "__main__":
     cli()
