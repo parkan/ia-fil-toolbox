@@ -416,6 +416,8 @@ def create_directory_via_mfs(files_dict: Dict[str, str], name_prefix: str = "dir
     Create a directory using MFS, which automatically handles HAMT sharding for large directories.
     MFS preserves the important dag-pb codec properties while handling optimization automatically.
     
+    Uses --flush=false for performance during bulk operations, then flushes manually at the end.
+    
     Args:
         files_dict: Dict mapping filename -> file_cid
         name_prefix: Prefix for the temporary MFS directory name
@@ -429,7 +431,7 @@ def create_directory_via_mfs(files_dict: Dict[str, str], name_prefix: str = "dir
     mfs_path = f'/tmp/{name_prefix}_{uuid.uuid4().hex[:8]}'
     
     try:
-        # Create MFS directory
+        # Create MFS directory (no need for --flush=false on mkdir)
         result = run_ipfs_cmd([
             'files', 'mkdir', '-p', mfs_path
         ], capture_output=True, text=True)
@@ -437,14 +439,23 @@ def create_directory_via_mfs(files_dict: Dict[str, str], name_prefix: str = "dir
         if result.returncode != 0:
             raise RuntimeError(f"Failed to create MFS directory: {result.stderr}")
         
-        # Copy each file to MFS - MFS automatically handles HAMT sharding and uses dag-pb
+        # Copy each file to MFS with --flush=false for performance
+        # MFS automatically handles HAMT sharding and uses dag-pb
         for filename, file_cid in files_dict.items():
             result = run_ipfs_cmd([
-                'files', 'cp', f'/ipfs/{file_cid}', f'{mfs_path}/{filename}'
+                'files', 'cp', '--flush=false', f'/ipfs/{file_cid}', f'{mfs_path}/{filename}'
             ], capture_output=True, text=True)
             
             if result.returncode != 0:
                 print(f"    ⚠️ Warning: Failed to add {filename}: {result.stderr}", file=sys.stderr)
+        
+        # Manually flush the directory to ensure consistency and get final CID
+        result = run_ipfs_cmd([
+            'files', 'flush', mfs_path
+        ], capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            print(f"    ⚠️ Warning: Failed to flush MFS directory: {result.stderr}", file=sys.stderr)
         
         # Get the final directory CID - MFS will have automatically used dag-pb and sharded if needed
         result = run_ipfs_cmd([
