@@ -21,7 +21,7 @@ def get_someguy_default():
 @click.option('--someguy/--no-someguy',
               default=get_someguy_default(),
               envvar='SOMEGUY_ENABLED',
-              help='Enable Someguy delegated routing (auto-disabled in test environments)')
+              help='Enable someguy delegated routing (auto-disabled in test environments)')
 @click.pass_context
 def cli(ctx, someguy):
     """IA item filecoin/IPFS toolbox"""
@@ -91,7 +91,7 @@ def merge_roots(cids, file):
 @cli.command()
 @click.pass_context
 def run_daemons(ctx):
-    """Run persistent IPFS and Someguy daemons"""
+    """Run persistent IPFS and someguy daemons"""
     from daemon_cmd import run_persistent_daemons
     someguy = ctx.obj['someguy']
     run_persistent_daemons(someguy=someguy)

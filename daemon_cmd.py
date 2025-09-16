@@ -260,17 +260,17 @@ def run_daemon_status():
         print("IPFS daemon is not running")
 
 
-# Someguy daemon management functions
+# someguy daemon management functions
 
 def start_someguy():
-    """Start Someguy daemon with Internet Archive endpoints"""
+    """Start someguy daemon with Internet Archive endpoints"""
     global _someguy_process_obj, _someguy_log_files
     import tempfile
     import atexit
     
-    print("Starting Someguy daemon...", file=sys.stderr)
+    print("Starting someguy daemon...", file=sys.stderr)
     
-    # Create temporary log files for Someguy output
+    # Create temporary log files for someguy output
     stdout_log = tempfile.NamedTemporaryFile(
         mode='w+', 
         prefix='someguy_stdout_', 
@@ -320,7 +320,7 @@ def start_someguy():
             print(f"Error generating peer ID: {e}", file=sys.stderr)
             return None
     
-    # Build Someguy command arguments
+    # Build someguy command arguments
     cmd_args = ['someguy']
     cmd_args.extend(['--listen-address', '127.0.0.1:8190'])
     cmd_args.extend(['--dht', 'disabled'])
@@ -331,7 +331,7 @@ def start_someguy():
     for peer_id in peer_ids:
         cmd_args.extend(['--http-block-provider-peerids', peer_id])
     
-    # Start Someguy daemon
+    # Start someguy daemon
     try:
         someguy_process = subprocess.Popen(
             cmd_args,
@@ -349,7 +349,7 @@ def start_someguy():
             atexit.unregister(cleanup_someguy_logs)
             
             returncode = someguy_process.returncode
-            print(f"Someguy daemon failed to start (exit code {returncode})", file=sys.stderr)
+            print(f"someguy daemon failed to start (exit code {returncode})", file=sys.stderr)
             print(f"Check logs for details:", file=sys.stderr)
             print(f"  stdout: {stdout_log.name}", file=sys.stderr)
             print(f"  stderr: {stderr_log.name}", file=sys.stderr)
@@ -359,29 +359,29 @@ def start_someguy():
         _someguy_process_obj = someguy_process
         _someguy_log_files = (stdout_log.name, stderr_log.name)
         
-        print("Someguy daemon is ready", file=sys.stderr)
+        print("someguy daemon is ready", file=sys.stderr)
         return someguy_process.pid
         
     except FileNotFoundError:
-        print("Error: 'someguy' command not found. Please install Someguy.", file=sys.stderr)
+        print("Error: 'someguy' command not found. Please install someguy.", file=sys.stderr)
         return None
     except Exception as e:
-        print(f"Error starting Someguy: {e}", file=sys.stderr)
+        print(f"Error starting someguy: {e}", file=sys.stderr)
         return None
 
 def ensure_someguy_running():
-    """Check if Someguy is running, start if needed"""
+    """Check if someguy is running, start if needed"""
     try:
-        # Test if Someguy is responding on its default port
+        # Test if someguy is responding on its default port
         import urllib.request
         urllib.request.urlopen("http://127.0.0.1:8190/", timeout=2)
         return True  # Already running
     except:
-        # Start Someguy
+        # Start someguy
         return start_someguy() is not None
 
 def run_persistent_daemons(someguy=True):
-    """Run persistent IPFS and optionally Someguy daemons until interrupted"""
+    """Run persistent IPFS and optionally someguy daemons until interrupted"""
     import signal
     import sys
     import os
@@ -400,15 +400,15 @@ def run_persistent_daemons(someguy=True):
     
     print(f"IPFS daemon started (PID: {ipfs_pid})")
     
-    # Start Someguy if requested
+    # Start someguy if requested
     someguy_pid = None
     if someguy:
         someguy_pid = start_someguy()
         if someguy_pid:
-            print(f"Someguy daemon started (PID: {someguy_pid})")
+            print(f"someguy daemon started (PID: {someguy_pid})")
         else:
-            print("Error: Failed to start Someguy daemon", file=sys.stderr)
-            print("Use --no-someguy to disable if Someguy is not needed.", file=sys.stderr)
+            print("Error: Failed to start someguy daemon", file=sys.stderr)
+            print("Use --no-someguy to disable if someguy is not needed.", file=sys.stderr)
             # Stop IPFS before exiting
             stop_daemon()
             sys.exit(1)
@@ -417,12 +417,12 @@ def run_persistent_daemons(someguy=True):
     def signal_handler(signum, frame):
         print("\nShutting down daemons...", file=sys.stderr)
         
-        # Stop Someguy first
+        # Stop someguy first
         if someguy_pid and _someguy_process_obj:
             try:
                 _someguy_process_obj.terminate()
                 _someguy_process_obj.wait(timeout=5)
-                print("Someguy daemon stopped", file=sys.stderr)
+                print("someguy daemon stopped", file=sys.stderr)
             except:
                 try:
                     _someguy_process_obj.kill()
@@ -451,9 +451,9 @@ def run_persistent_daemons(someguy=True):
                     print(f"Check logs: {_daemon_log_files[0]} {_daemon_log_files[1]}", file=sys.stderr)
                 sys.exit(1)
             
-            # Check Someguy daemon
+            # Check someguy daemon
             if someguy and _someguy_process_obj and _someguy_process_obj.poll() is not None:
-                print("Someguy daemon died unexpectedly!", file=sys.stderr)
+                print("someguy daemon died unexpectedly!", file=sys.stderr)
                 if _someguy_log_files:
                     print(f"Check logs: {_someguy_log_files[0]} {_someguy_log_files[1]}", file=sys.stderr)
                 sys.exit(1)

@@ -288,7 +288,7 @@ def validate_xml_completeness(cid: str, identifiers: List[str], results: Dict[st
 _daemon_process = None
 
 def start_staging_ipfs(someguy=False):
-    """Start the staging IPFS daemon (and optionally Someguy) and wait for it to be ready"""
+    """Start the staging IPFS daemon (and optionally someguy) and wait for it to be ready"""
     global _daemon_process
     
     if _daemon_process and _daemon_process.poll() is None:
@@ -315,7 +315,7 @@ def start_staging_ipfs(someguy=False):
     if not daemon_pid:
         raise RuntimeError("Failed to start staging IPFS daemon")
     
-    # Start Someguy if requested
+    # Start someguy if requested
     if someguy:
         from daemon_cmd import start_someguy
         start_someguy()
@@ -384,7 +384,7 @@ def stop_staging_ipfs():
         _daemon_process = None
 
 def ensure_staging_ipfs(someguy=False):
-    """Ensure staging IPFS daemon (and optionally Someguy) is running, start if needed"""
+    """Ensure staging IPFS daemon (and optionally someguy) is running, start if needed"""
     import os
     
     try:
@@ -396,7 +396,7 @@ def ensure_staging_ipfs(someguy=False):
             timeout=2
         )
         if result.returncode == 0:
-            # IPFS is running, check if we need to start Someguy
+            # IPFS is running, check if we need to start someguy
             if someguy:
                 from daemon_cmd import ensure_someguy_running
                 ensure_someguy_running()
