@@ -24,7 +24,7 @@ before_script:
   # Install Python dependencies
   - uv sync
   
-  # Initialize IPFS repo for tests (same as staging_ipfs.sh)
+  # Initialize IPFS repo for tests (CLI will configure this automatically)
   - export IPFS_PATH=".ipfs_staging"
   - ipfs init --profile=pebbleds
 
@@ -34,8 +34,7 @@ test:
     # Ensure PATH includes /usr/local/bin for this script section
     - export PATH=/usr/local/bin:$PATH
     
-    # Make staging script executable (CLI will use this automatically)
-    - chmod +x staging_ipfs.sh
+    # CLI now handles daemon management internally
     
     # Run the test suite (CLI handles daemon management automatically)
     - uv run python test_pipeline.py

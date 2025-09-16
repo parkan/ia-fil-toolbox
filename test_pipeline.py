@@ -304,8 +304,12 @@ class TestIAFilToolbox(unittest.TestCase):
     
     def test_extract_items_command(self):
         """Test the extract-items command creates synthetic directories correctly"""
-        # Add test fixtures to IPFS (using direct repo access, no daemon needed)
-        result, error = run_cmd(["ipfs", "add", "-r", "--cid-version=1", "test_fixtures"])
+        # Ensure daemon is running for all operations
+        from shared import ensure_staging_ipfs
+        ensure_staging_ipfs()
+        
+        # Add test fixtures to IPFS 
+        result, error = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "add", "-r", "--cid-version=1", "test_fixtures"])
         self.assertIsNotNone(result, f"Failed to add test fixtures: {error}")
         
         # Extract root CID
@@ -349,31 +353,73 @@ class TestIAFilToolbox(unittest.TestCase):
         # Validate each synthetic directory contains expected files
         for identifier, synthetic_cid in synthetic_dirs.items():
             with self.subTest(identifier=identifier):
-                # List directory contents
-                ls_result, ls_error = run_cmd(["ipfs", "ls", "--size=false", "--resolve-type=false", synthetic_cid])
+                # List top-level directory contents
+                ls_result, ls_error = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "ls", "--size=false", "--resolve-type=false", synthetic_cid])
                 self.assertIsNotNone(ls_result, f"Failed to list {synthetic_cid}: {ls_error}")
                 
-                # Parse file list  
-                files_in_dir = []
+                # Parse top-level entries (both files and directories)
+                top_level_entries = {}  # name -> (cid, is_directory)
                 for line in ls_result.split('\n'):
                     if line.strip():
                         parts = line.split()
                         if len(parts) >= 2:
-                            files_in_dir.append(parts[1])
+                            entry_cid = parts[0]
+                            entry_name = parts[1]
+                            top_level_entries[entry_name] = entry_cid
                 
-                # Check expected files
+                # Check expected structure and drill down into subdirectories
                 if identifier == 'item1':
-                    expected = {'item1_data.txt', 'item1_doc.pdf', 'subdir/nested_file.txt', 'videos.thumbs/thumb_001.jpg'}
+                    # Should have 2 files + 2 subdirectories at the top level
+                    expected_top_level = {'item1_data.txt', 'item1_doc.pdf', 'subdir', 'videos.thumbs'}
+                    self.assertEqual(set(top_level_entries.keys()), expected_top_level,
+                                   f"Directory {identifier} has wrong top-level entries")
+                    
+                    # Verify subdir contains nested_file.txt
+                    if 'subdir' in top_level_entries:
+                        subdir_cid = top_level_entries['subdir']
+                        subdir_result, subdir_error = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "ls", "--size=false", "--resolve-type=false", subdir_cid])
+                        self.assertIsNotNone(subdir_result, f"Failed to list subdir {subdir_cid}: {subdir_error}")
+                        
+                        subdir_files = []
+                        for line in subdir_result.split('\n'):
+                            if line.strip():
+                                parts = line.split()
+                                if len(parts) >= 2:
+                                    subdir_files.append(parts[1])
+                        
+                        self.assertEqual(set(subdir_files), {'nested_file.txt'},
+                                       f"subdir should contain nested_file.txt, got {subdir_files}")
+                    
+                    # Verify videos.thumbs contains thumb_001.jpg
+                    if 'videos.thumbs' in top_level_entries:
+                        thumbs_cid = top_level_entries['videos.thumbs']
+                        thumbs_result, thumbs_error = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "ls", "--size=false", "--resolve-type=false", thumbs_cid])
+                        self.assertIsNotNone(thumbs_result, f"Failed to list videos.thumbs {thumbs_cid}: {thumbs_error}")
+                        
+                        thumbs_files = []
+                        for line in thumbs_result.split('\n'):
+                            if line.strip():
+                                parts = line.split()
+                                if len(parts) >= 2:
+                                    thumbs_files.append(parts[1])
+                        
+                        self.assertEqual(set(thumbs_files), {'thumb_001.jpg'},
+                                       f"videos.thumbs should contain thumb_001.jpg, got {thumbs_files}")
+                        
                 else:  # item2
-                    expected = {'item2_image.jpg', 'item2_notes.md'}
-                
-                self.assertEqual(set(files_in_dir), expected,
-                               f"Directory {identifier} has wrong files")
+                    # item2 only has files at the root level
+                    expected_top_level = {'item2_image.jpg', 'item2_notes.md'}
+                    self.assertEqual(set(top_level_entries.keys()), expected_top_level,
+                                   f"Directory {identifier} has wrong top-level entries")
     
     def test_subdirectory_handling(self):
         """Test that subdirectories are handled correctly in recursive file listing"""
-        # Add test fixtures to IPFS (using direct repo access, no daemon needed)
-        result, error = run_cmd(["ipfs", "add", "-r", "--cid-version=1", "test_fixtures"])
+        # Ensure daemon is running for all operations
+        from shared import ensure_staging_ipfs
+        ensure_staging_ipfs()
+        
+        # Add test fixtures to IPFS 
+        result, error = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "add", "-r", "--cid-version=1", "test_fixtures"])
         self.assertIsNotNone(result, f"Failed to add test fixtures: {error}")
         
         # Extract root CID
@@ -418,6 +464,10 @@ class TestIAFilToolbox(unittest.TestCase):
     
     def test_merge_roots_command(self):
         """Test the merge-roots command merges multiple CIDs correctly"""
+        # Ensure daemon is running for all operations
+        from shared import ensure_staging_ipfs
+        ensure_staging_ipfs()
+        
         # Create two test directories with some overlapping files
         test_dir2 = Path("test_fixtures2")
         test_dir2.mkdir(exist_ok=True)
@@ -432,10 +482,10 @@ class TestIAFilToolbox(unittest.TestCase):
             (Path("test_fixtures") / "shared_file.txt").write_text("This file exists in both")
             
             # Add both directories to IPFS
-            result1, error1 = run_cmd(["ipfs", "add", "-r", "--cid-version=1", "test_fixtures"])
+            result1, error1 = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "add", "-r", "--cid-version=1", "test_fixtures"])
             self.assertIsNotNone(result1, f"Failed to add test_fixtures: {error1}")
             
-            result2, error2 = run_cmd(["ipfs", "add", "-r", "--cid-version=1", str(test_dir2)])
+            result2, error2 = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "add", "-r", "--cid-version=1", str(test_dir2)])
             self.assertIsNotNone(result2, f"Failed to add test_fixtures2: {error2}")
             
             # Extract root CIDs
