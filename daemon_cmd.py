@@ -384,6 +384,7 @@ def run_persistent_daemons(someguy=True):
     """Run persistent IPFS and optionally Someguy daemons until interrupted"""
     import signal
     import sys
+    import os
     
     # Initialize and start IPFS
     if not initialize_repo():
@@ -406,7 +407,11 @@ def run_persistent_daemons(someguy=True):
         if someguy_pid:
             print(f"Someguy daemon started (PID: {someguy_pid})")
         else:
-            print("Warning: Failed to start Someguy daemon", file=sys.stderr)
+            print("Error: Failed to start Someguy daemon", file=sys.stderr)
+            print("Use --no-someguy to disable if Someguy is not needed.", file=sys.stderr)
+            # Stop IPFS before exiting
+            stop_daemon()
+            sys.exit(1)
     
     # Set up signal handlers for clean shutdown
     def signal_handler(signum, frame):
