@@ -268,6 +268,15 @@ def start_someguy():
     import tempfile
     import atexit
     
+    # Check if someguy is already running
+    try:
+        import urllib.request
+        urllib.request.urlopen("http://127.0.0.1:8190/version", timeout=2)
+        print("someguy daemon is already running", file=sys.stderr)
+        return -1  # Special value to indicate "already running"
+    except:
+        pass  # Not running, proceed to start it
+    
     print("Starting someguy daemon...", file=sys.stderr)
     
     # Create temporary log files for someguy output
@@ -374,7 +383,7 @@ def ensure_someguy_running():
     try:
         # Test if someguy is responding on its default port
         import urllib.request
-        urllib.request.urlopen("http://127.0.0.1:8190/", timeout=2)
+        urllib.request.urlopen("http://127.0.0.1:8190/version", timeout=2)
         return True  # Already running
     except:
         # Start someguy
@@ -402,9 +411,14 @@ def run_persistent_daemons(someguy=True):
     
     # Start someguy if requested
     someguy_pid = None
+    someguy_external = False
     if someguy:
         someguy_pid = start_someguy()
-        if someguy_pid:
+        if someguy_pid == -1:
+            # Already running externally
+            someguy_external = True
+            print("Using external someguy daemon")
+        elif someguy_pid:
             print(f"someguy daemon started (PID: {someguy_pid})")
         else:
             print("Error: Failed to start someguy daemon", file=sys.stderr)
@@ -417,8 +431,8 @@ def run_persistent_daemons(someguy=True):
     def signal_handler(signum, frame):
         print("\nShutting down daemons...", file=sys.stderr)
         
-        # Stop someguy first
-        if someguy_pid and _someguy_process_obj:
+        # Stop someguy first (only if we started it)
+        if someguy_pid and someguy_pid != -1 and _someguy_process_obj:
             try:
                 _someguy_process_obj.terminate()
                 _someguy_process_obj.wait(timeout=5)
@@ -428,6 +442,8 @@ def run_persistent_daemons(someguy=True):
                     _someguy_process_obj.kill()
                 except:
                     pass
+        elif someguy_external:
+            print("Note: External someguy daemon left running", file=sys.stderr)
         
         # Stop IPFS
         stop_daemon()
@@ -451,8 +467,8 @@ def run_persistent_daemons(someguy=True):
                     print(f"Check logs: {_daemon_log_files[0]} {_daemon_log_files[1]}", file=sys.stderr)
                 sys.exit(1)
             
-            # Check someguy daemon
-            if someguy and _someguy_process_obj and _someguy_process_obj.poll() is not None:
+            # Check someguy daemon (only if we started it)
+            if someguy and not someguy_external and _someguy_process_obj and _someguy_process_obj.poll() is not None:
                 print("someguy daemon died unexpectedly!", file=sys.stderr)
                 if _someguy_log_files:
                     print(f"Check logs: {_someguy_log_files[0]} {_someguy_log_files[1]}", file=sys.stderr)
