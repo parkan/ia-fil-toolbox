@@ -1,19 +1,37 @@
 #!/usr/bin/env python3
 
 import click
+import os
+import sys
 from typing import List
 from shared import read_cids_from_file, ensure_staging_ipfs
 
+def get_someguy_default():
+    """Smart default: enabled unless we detect testing environment"""
+    # Disable in common testing scenarios
+    if any(var in os.environ for var in ['CI', 'PYTEST_CURRENT_TEST', 'UNITTEST']):
+        return False
+    # Disable if explicitly running tests
+    if 'test' in sys.argv[0] or any('test' in arg for arg in sys.argv):
+        return False
+    # Default to enabled for production use
+    return True
+
 @click.group()
+@click.option('--someguy/--no-someguy',
+              default=get_someguy_default(),
+              envvar='SOMEGUY_ENABLED',
+              help='Enable Someguy delegated routing (auto-disabled in test environments)')
 @click.pass_context
-def cli(ctx):
+def cli(ctx, someguy):
     """IA item filecoin/IPFS toolbox"""
-    # Ensure daemon is running for all commands (except daemon management and utility commands)
-    if ctx.invoked_subcommand not in ['start-daemons', 'stop-daemons', 'daemon-status', 'completion']:
-        ensure_staging_ipfs()
-    
-    # Ensure context object exists for cleanup
+    # Store someguy setting in context for all subcommands
     ctx.ensure_object(dict)
+    ctx.obj['someguy'] = someguy
+    
+    # Ensure daemon is running for all commands (except daemon management and utility commands)
+    if ctx.invoked_subcommand not in ['run-daemons', 'daemon-status', 'completion']:
+        ensure_staging_ipfs(someguy=someguy)
 
 @cli.command()
 @click.argument('cids', nargs=-1)
@@ -71,16 +89,12 @@ def merge_roots(cids, file):
     run_merge_roots(cid_list)
 
 @cli.command()
-def start_daemons():
-    """Start IPFS staging daemon"""
-    from daemon_cmd import run_start_daemons
-    run_start_daemons()
-
-@cli.command()
-def stop_daemons():
-    """Stop IPFS staging daemon"""
-    from daemon_cmd import run_stop_daemons
-    run_stop_daemons()
+@click.pass_context
+def run_daemons(ctx):
+    """Run persistent IPFS and Someguy daemons"""
+    from daemon_cmd import run_persistent_daemons
+    someguy = ctx.obj['someguy']
+    run_persistent_daemons(someguy=someguy)
 
 @cli.command()
 def daemon_status():

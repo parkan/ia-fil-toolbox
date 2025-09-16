@@ -7,6 +7,12 @@ import time
 import signal
 from pathlib import Path
 
+# Global variables to track daemon processes and log files
+_daemon_process_obj = None
+_daemon_log_files = None
+_someguy_process_obj = None
+_someguy_log_files = None
+
 
 def initialize_repo():
     """Initialize IPFS repo if it doesn't exist"""
@@ -83,18 +89,62 @@ def configure_ipfs():
 
 def start_daemon():
     """Start the IPFS daemon"""
+    import tempfile
+    import atexit
+    import signal
+    
     repo_dir = ".ipfs_staging"
     env = os.environ.copy()
     env['IPFS_PATH'] = repo_dir
     
     print("Starting IPFS daemon on port 5009...", file=sys.stderr)
     
-    # Start daemon in background
+    # Create temporary log files for daemon output
+    stdout_log = tempfile.NamedTemporaryFile(
+        mode='w+', 
+        prefix='ipfs_daemon_stdout_', 
+        suffix='.log',
+        delete=False  # We'll manage deletion ourselves
+    )
+    stderr_log = tempfile.NamedTemporaryFile(
+        mode='w+', 
+        prefix='ipfs_daemon_stderr_', 
+        suffix='.log',
+        delete=False
+    )
+    
+    # Register cleanup for normal operation
+    def cleanup_logs():
+        try:
+            stdout_log.close()
+            stderr_log.close()
+            os.unlink(stdout_log.name)
+            os.unlink(stderr_log.name)
+        except:
+            pass
+    
+    atexit.register(cleanup_logs)
+    
+    def diagnose_process_death(returncode):
+        """Provide human-readable description of how process died"""
+        if returncode == 0:
+            return "Process exited successfully"
+        elif returncode > 0:
+            return f"Process failed with exit code {returncode}"
+        elif returncode < 0:
+            signal_num = -returncode
+            try:
+                signal_name = signal.Signals(signal_num).name
+                return f"Process killed by signal {signal_num} ({signal_name})"
+            except ValueError:
+                return f"Process killed by unknown signal {signal_num}"
+    
+    # Start daemon in background, logging to temp files
     daemon_process = subprocess.Popen(
         ['ipfs', 'daemon'],
         env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=stdout_log,
+        stderr=stderr_log,
         text=True
     )
     
@@ -109,21 +159,49 @@ def start_daemon():
             )
             if result.returncode == 0:
                 print("IPFS daemon is ready", file=sys.stderr)
+                
+                # Store the process object globally for proper cleanup
+                global _daemon_process_obj, _daemon_log_files
+                _daemon_process_obj = daemon_process
+                _daemon_log_files = (stdout_log.name, stderr_log.name)
+                
                 return daemon_process.pid
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
             pass
         
         # Check if process is still alive
         if daemon_process.poll() is not None:
-            stdout, stderr = daemon_process.communicate()
-            print(f"Daemon failed to start: {stderr}", file=sys.stderr)
+            returncode = daemon_process.returncode
+            
+            # Don't clean up logs - we need them for debugging
+            atexit.unregister(cleanup_logs)
+            
+            print(f"IPFS daemon failed: {diagnose_process_death(returncode)}", file=sys.stderr)
+            print(f"Check logs for details:", file=sys.stderr)
+            print(f"  stdout: {stdout_log.name}", file=sys.stderr)
+            print(f"  stderr: {stderr_log.name}", file=sys.stderr)
+            
             return None
             
         time.sleep(1)
     
-    # If we get here, daemon failed to start
+    # If we get here, daemon failed to start within timeout
     daemon_process.terminate()
-    print("Timeout waiting for daemon to start", file=sys.stderr)
+    
+    # Wait a bit for termination, then check final status
+    time.sleep(1)
+    returncode = daemon_process.poll()
+    
+    # Don't clean up logs - we need them for debugging
+    atexit.unregister(cleanup_logs)
+    
+    print(f"IPFS daemon startup timeout (30 seconds)", file=sys.stderr)
+    if returncode is not None:
+        print(f"Final status: {diagnose_process_death(returncode)}", file=sys.stderr)
+    print(f"Check logs for details:", file=sys.stderr)
+    print(f"  stdout: {stdout_log.name}", file=sys.stderr)
+    print(f"  stderr: {stderr_log.name}", file=sys.stderr)
+    
     return None
 
 
@@ -158,31 +236,6 @@ def stop_daemon():
         return False
 
 
-def run_start_daemons():
-    """Start all required daemons"""
-    # Initialize repo if needed
-    if not initialize_repo():
-        sys.exit(1)
-    
-    # Configure IPFS
-    configure_ipfs()
-    
-    # Start IPFS daemon
-    pid = start_daemon()
-    if pid:
-        print(f"IPFS daemon started (PID: {pid})")
-        print("Daemon is ready for processing")
-    else:
-        print("Failed to start IPFS daemon", file=sys.stderr)
-        sys.exit(1)
-
-
-def run_stop_daemons():
-    """Stop all daemons"""
-    if stop_daemon():
-        print("All daemons stopped")
-    else:
-        print("No daemons were running", file=sys.stderr)
 
 
 def run_daemon_status():
@@ -205,3 +258,200 @@ def run_daemon_status():
             print("IPFS daemon is not responding")
     except Exception:
         print("IPFS daemon is not running")
+
+
+# Someguy daemon management functions
+
+def start_someguy():
+    """Start Someguy daemon with Internet Archive endpoints"""
+    global _someguy_process_obj, _someguy_log_files
+    import tempfile
+    import atexit
+    
+    print("Starting Someguy daemon...", file=sys.stderr)
+    
+    # Create temporary log files for Someguy output
+    stdout_log = tempfile.NamedTemporaryFile(
+        mode='w+', 
+        prefix='someguy_stdout_', 
+        suffix='.log',
+        delete=False
+    )
+    stderr_log = tempfile.NamedTemporaryFile(
+        mode='w+', 
+        prefix='someguy_stderr_', 
+        suffix='.log',
+        delete=False
+    )
+    
+    # Register cleanup for normal operation
+    def cleanup_someguy_logs():
+        try:
+            stdout_log.close()
+            stderr_log.close()
+            os.unlink(stdout_log.name)
+            os.unlink(stderr_log.name)
+        except:
+            pass
+    
+    atexit.register(cleanup_someguy_logs)
+    
+    # Generate throwaway peer IDs for endpoints (following run-someguy.sh pattern)
+    endpoints = ['https://ia.dcentnetworks.nl']
+    peer_ids = []
+    
+    for i, endpoint in enumerate(endpoints):
+        # Generate temporary key to get peer ID
+        key_name = f"tmp-throwaway-{os.getpid()}_{i}"
+        try:
+            result = subprocess.run(
+                ['ipfs', '--api', '/ip4/127.0.0.1/tcp/5009', 'key', 'gen', '-t', 'ed25519', key_name],
+                capture_output=True, text=True
+            )
+            if result.returncode == 0:
+                peer_id = result.stdout.strip().split('\n')[-1]
+                peer_ids.append(peer_id)
+                # Clean up the key
+                subprocess.run(['ipfs', '--api', '/ip4/127.0.0.1/tcp/5009', 'key', 'rm', key_name], capture_output=True)
+            else:
+                print(f"Failed to generate peer ID for {endpoint}: {result.stderr}", file=sys.stderr)
+                return None
+        except Exception as e:
+            print(f"Error generating peer ID: {e}", file=sys.stderr)
+            return None
+    
+    # Build Someguy command arguments
+    cmd_args = ['someguy']
+    cmd_args.extend(['--listen-address', '127.0.0.1:8190'])
+    cmd_args.extend(['--dht', 'disabled'])
+    
+    # Add endpoints and peer IDs
+    for endpoint in endpoints:
+        cmd_args.extend(['--http-block-provider-endpoints', endpoint])
+    for peer_id in peer_ids:
+        cmd_args.extend(['--http-block-provider-peerids', peer_id])
+    
+    # Start Someguy daemon
+    try:
+        someguy_process = subprocess.Popen(
+            cmd_args,
+            stdout=stdout_log,
+            stderr=stderr_log,
+            text=True
+        )
+        
+        # Wait a moment for startup
+        time.sleep(2)
+        
+        # Check if process is still alive
+        if someguy_process.poll() is not None:
+            # Don't clean up logs - we need them for debugging
+            atexit.unregister(cleanup_someguy_logs)
+            
+            returncode = someguy_process.returncode
+            print(f"Someguy daemon failed to start (exit code {returncode})", file=sys.stderr)
+            print(f"Check logs for details:", file=sys.stderr)
+            print(f"  stdout: {stdout_log.name}", file=sys.stderr)
+            print(f"  stderr: {stderr_log.name}", file=sys.stderr)
+            return None
+        
+        # Store process object and log files globally
+        _someguy_process_obj = someguy_process
+        _someguy_log_files = (stdout_log.name, stderr_log.name)
+        
+        print("Someguy daemon is ready", file=sys.stderr)
+        return someguy_process.pid
+        
+    except FileNotFoundError:
+        print("Error: 'someguy' command not found. Please install Someguy.", file=sys.stderr)
+        return None
+    except Exception as e:
+        print(f"Error starting Someguy: {e}", file=sys.stderr)
+        return None
+
+def ensure_someguy_running():
+    """Check if Someguy is running, start if needed"""
+    try:
+        # Test if Someguy is responding on its default port
+        import urllib.request
+        urllib.request.urlopen("http://127.0.0.1:8190/", timeout=2)
+        return True  # Already running
+    except:
+        # Start Someguy
+        return start_someguy() is not None
+
+def run_persistent_daemons(someguy=True):
+    """Run persistent IPFS and optionally Someguy daemons until interrupted"""
+    import signal
+    import sys
+    
+    # Initialize and start IPFS
+    if not initialize_repo():
+        print("Failed to initialize IPFS repository", file=sys.stderr)
+        sys.exit(1)
+    
+    configure_ipfs()
+    
+    ipfs_pid = start_daemon()
+    if not ipfs_pid:
+        print("Failed to start IPFS daemon", file=sys.stderr)
+        sys.exit(1)
+    
+    print(f"IPFS daemon started (PID: {ipfs_pid})")
+    
+    # Start Someguy if requested
+    someguy_pid = None
+    if someguy:
+        someguy_pid = start_someguy()
+        if someguy_pid:
+            print(f"Someguy daemon started (PID: {someguy_pid})")
+        else:
+            print("Warning: Failed to start Someguy daemon", file=sys.stderr)
+    
+    # Set up signal handlers for clean shutdown
+    def signal_handler(signum, frame):
+        print("\nShutting down daemons...", file=sys.stderr)
+        
+        # Stop Someguy first
+        if someguy_pid and _someguy_process_obj:
+            try:
+                _someguy_process_obj.terminate()
+                _someguy_process_obj.wait(timeout=5)
+                print("Someguy daemon stopped", file=sys.stderr)
+            except:
+                try:
+                    _someguy_process_obj.kill()
+                except:
+                    pass
+        
+        # Stop IPFS
+        stop_daemon()
+        
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    print("Daemons running. Press Ctrl+C to stop.")
+    
+    # Monitor daemon health
+    try:
+        while True:
+            time.sleep(5)
+            
+            # Check IPFS daemon
+            if _daemon_process_obj and _daemon_process_obj.poll() is not None:
+                print("IPFS daemon died unexpectedly!", file=sys.stderr)
+                if _daemon_log_files:
+                    print(f"Check logs: {_daemon_log_files[0]} {_daemon_log_files[1]}", file=sys.stderr)
+                sys.exit(1)
+            
+            # Check Someguy daemon
+            if someguy and _someguy_process_obj and _someguy_process_obj.poll() is not None:
+                print("Someguy daemon died unexpectedly!", file=sys.stderr)
+                if _someguy_log_files:
+                    print(f"Check logs: {_someguy_log_files[0]} {_someguy_log_files[1]}", file=sys.stderr)
+                sys.exit(1)
+                
+    except KeyboardInterrupt:
+        signal_handler(signal.SIGINT, None)

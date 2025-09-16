@@ -287,12 +287,15 @@ def validate_xml_completeness(cid: str, identifiers: List[str], results: Dict[st
 # Global variable to track daemon process
 _daemon_process = None
 
-def start_staging_ipfs():
-    """Start the staging IPFS daemon and wait for it to be ready"""
+def start_staging_ipfs(someguy=False):
+    """Start the staging IPFS daemon (and optionally Someguy) and wait for it to be ready"""
     global _daemon_process
     
     if _daemon_process and _daemon_process.poll() is None:
         # Daemon is already running
+        if someguy:
+            from daemon_cmd import ensure_someguy_running
+            ensure_someguy_running()
         return _daemon_process
     
     print("Starting staging IPFS daemon...", file=sys.stderr)
@@ -311,6 +314,11 @@ def start_staging_ipfs():
     daemon_pid = start_daemon()
     if not daemon_pid:
         raise RuntimeError("Failed to start staging IPFS daemon")
+    
+    # Start Someguy if requested
+    if someguy:
+        from daemon_cmd import start_someguy
+        start_someguy()
     
     # Create a dummy process object to maintain compatibility with existing code
     class DaemonProcess:
@@ -345,12 +353,27 @@ def stop_staging_ipfs():
                 timeout=10
             )
             # Wait for the daemon process to actually exit
-            _daemon_process.wait(timeout=5)
+            # Use polling since DaemonProcess doesn't have wait()
+            import time
+            for _ in range(10):  # 5 seconds total
+                if _daemon_process.poll() is not None:
+                    break
+                time.sleep(0.5)
+            else:
+                # Process still running after 5 seconds, continue to force kill
+                pass
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError, ProcessLookupError, OSError):
             # Fall back to signal-based shutdown if ipfs shutdown fails
             try:
                 os.killpg(os.getpgid(_daemon_process.pid), signal.SIGTERM)
-                _daemon_process.wait(timeout=5)
+                # Wait for the daemon process to actually exit
+                for _ in range(10):  # 5 seconds total
+                    if _daemon_process.poll() is not None:
+                        break
+                    time.sleep(0.5)
+                else:
+                    # Process still running after 5 seconds, continue to force kill
+                    pass
             except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
                 # Force kill if graceful shutdown fails
                 try:
@@ -360,8 +383,8 @@ def stop_staging_ipfs():
         
         _daemon_process = None
 
-def ensure_staging_ipfs():
-    """Ensure staging IPFS daemon is running, start if needed"""
+def ensure_staging_ipfs(someguy=False):
+    """Ensure staging IPFS daemon (and optionally Someguy) is running, start if needed"""
     import os
     
     try:
@@ -373,6 +396,10 @@ def ensure_staging_ipfs():
             timeout=2
         )
         if result.returncode == 0:
+            # IPFS is running, check if we need to start Someguy
+            if someguy:
+                from daemon_cmd import ensure_someguy_running
+                ensure_someguy_running()
             return  # Already running
     except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
         pass
@@ -383,8 +410,8 @@ def ensure_staging_ipfs():
         print(f"Warning: Cannot connect to IPFS daemon but lock file exists: {lock_file}", file=sys.stderr)
         print("This suggests a daemon may be running but not responding, or was not shut down cleanly.", file=sys.stderr)
     
-    # Start the daemon
-    start_staging_ipfs()
+    # Start the daemon(s)
+    start_staging_ipfs(someguy=someguy)
 
 def pin_cid(cid: str) -> bool:
     """Pin a CID in the staging IPFS node"""
@@ -441,9 +468,10 @@ def create_directory_via_mfs(files_dict: Dict[str, str], name_prefix: str = "dir
         
         # Copy each file to MFS with --flush=false for performance
         # MFS automatically handles HAMT sharding and uses dag-pb
+        # Use --parents to automatically create intermediate directories
         for filename, file_cid in files_dict.items():
             result = run_ipfs_cmd([
-                'files', 'cp', '--flush=false', f'/ipfs/{file_cid}', f'{mfs_path}/{filename}'
+                'files', 'cp', '--flush=false', '--parents', f'/ipfs/{file_cid}', f'{mfs_path}/{filename}'
             ], capture_output=True, text=True)
             
             if result.returncode != 0:
