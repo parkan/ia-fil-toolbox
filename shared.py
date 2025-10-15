@@ -17,6 +17,26 @@ MFS_FLUSH_LIMIT = 1024
 # Debug configuration
 DEBUG = os.environ.get('DEBUG', '').lower() in ('1', 'true', 'yes', 'on')
 
+# File extensions that are almost certainly files (not directories)
+FILE_EXTENSIONS = {
+    # Images
+    '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.tif', '.webp', '.svg', '.ico',
+    # Videos
+    '.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.3gp', '.ogv',
+    # Audio
+    '.mp3', '.wav', '.flac', '.aac', '.ogg', '.wma', '.m4a', '.opus',
+    # Documents
+    '.pdf', '.doc', '.docx', '.txt', '.rtf', '.odt', '.pages',
+    # Archives
+    '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz', '.tar.gz', '.tar.bz2',
+    # Data
+    '.json', '.xml', '.csv', '.tsv', '.yaml', '.yml',
+    # Code
+    '.py', '.js', '.html', '.css', '.java', '.cpp', '.c', '.h', '.php', '.rb', '.go',
+    # Other common file types
+    '.log', '.db', '.sqlite', '.sql', '.iso', '.dmg', '.exe', '.msi', '.deb', '.rpm'
+}
+
 def read_cids_from_file(file_path: str) -> List[str]:
     cids = []
     
@@ -106,6 +126,17 @@ def list_files_with_cids(cid: str) -> Dict[str, str]:
                 item_cid = parts[0]
                 item_name = parts[1]
                 full_path = f"{path_prefix}{item_name}" if path_prefix else item_name
+                
+                # Use filename extension heuristic to avoid unnecessary network calls
+                item_name_lower = item_name.lower()
+                has_file_extension = any(item_name_lower.endswith(ext) for ext in FILE_EXTENSIONS)
+                
+                if has_file_extension:
+                    # Skip directory check for files with known extensions
+                    if DEBUG:
+                        print(f"  DEBUG: Skipping directory check for {item_name} (has file extension)", file=sys.stderr)
+                    files[full_path] = item_cid
+                    continue
                 
                 # Check if this is a directory by trying to list it
                 # If it fails, it's a file
