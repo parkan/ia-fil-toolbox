@@ -315,10 +315,35 @@ def start_staging_ipfs(someguy=False):
     if not daemon_pid:
         raise RuntimeError("Failed to start staging IPFS daemon")
     
+    # Wait for daemon to be fully ready before starting someguy
+    import time
+    for i in range(10):  # Wait up to 5 seconds
+        try:
+            result = subprocess.run(
+                ['ipfs', '--api', '/ip4/127.0.0.1/tcp/5009', 'id'],
+                capture_output=True,
+                text=True,
+                timeout=1
+            )
+            if result.returncode == 0:
+                break
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
+            pass
+        time.sleep(0.5)
+    else:
+        raise RuntimeError("IPFS daemon failed to become ready")
+    
     # Start someguy if requested
     if someguy:
         from daemon_cmd import start_someguy
-        start_someguy()
+        someguy_result = start_someguy()
+        if someguy_result is None:
+            # someguy failed to start
+            print("Error: Failed to start someguy daemon", file=sys.stderr)
+            print("Use --no-someguy to disable if someguy is not needed.", file=sys.stderr)
+            # Stop IPFS before exiting
+            stop_staging_ipfs()
+            sys.exit(1)
     
     # Create a dummy process object to maintain compatibility with existing code
     class DaemonProcess:
@@ -399,7 +424,10 @@ def ensure_staging_ipfs(someguy=False):
             # IPFS is running, check if we need to start someguy
             if someguy:
                 from daemon_cmd import ensure_someguy_running
-                ensure_someguy_running()
+                if not ensure_someguy_running():
+                    print("Error: Failed to start someguy daemon", file=sys.stderr)
+                    print("Use --no-someguy to disable if someguy is not needed.", file=sys.stderr)
+                    sys.exit(1)
             return  # Already running
     except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
         pass

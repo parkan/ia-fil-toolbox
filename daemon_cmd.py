@@ -71,8 +71,8 @@ def configure_ipfs():
         # HTTP Retrieval: enable
         (['config', '--json', 'HTTPRetrieval.Enabled', 'true'], "HTTP retrieval"),
         
-        # Reprovider: only provide pinned content
-        (['config', '--json', 'Reprovider.Strategy', '"pinned"'], "Reprovider strategy"),
+        # Provide: only provide pinned content (migrated from Reprovider.Strategy)
+        (['config', '--json', 'Provide.Strategy', '"pinned"'], "Provide strategy"),
         
         # Use CIDv1 by default for Filecoin compatibility
         (['config', '--json', 'Datastore.StorageMax', '"10GB"'], "Storage limit"),
@@ -309,19 +309,26 @@ def start_someguy():
     endpoints = ['https://ia.dcentnetworks.nl']
     peer_ids = []
     
+    # Ensure keystore directory exists
+    keystore_dir = ".ipfs_staging/keystore"
+    os.makedirs(keystore_dir, exist_ok=True)
+    
     for i, endpoint in enumerate(endpoints):
         # Generate temporary key to get peer ID
         key_name = f"tmp-throwaway-{os.getpid()}_{i}"
         try:
+            # Use IPFS_PATH instead of --api for key generation to avoid keystore access issues
+            env = os.environ.copy()
+            env['IPFS_PATH'] = '.ipfs_staging'
             result = subprocess.run(
-                ['ipfs', '--api', '/ip4/127.0.0.1/tcp/5009', 'key', 'gen', '-t', 'ed25519', key_name],
-                capture_output=True, text=True
+                ['ipfs', 'key', 'gen', '-t', 'ed25519', key_name],
+                capture_output=True, text=True, env=env
             )
             if result.returncode == 0:
                 peer_id = result.stdout.strip().split('\n')[-1]
                 peer_ids.append(peer_id)
                 # Clean up the key
-                subprocess.run(['ipfs', '--api', '/ip4/127.0.0.1/tcp/5009', 'key', 'rm', key_name], capture_output=True)
+                subprocess.run(['ipfs', 'key', 'rm', key_name], capture_output=True, env=env)
             else:
                 print(f"Failed to generate peer ID for {endpoint}: {result.stderr}", file=sys.stderr)
                 return None
@@ -330,7 +337,7 @@ def start_someguy():
             return None
     
     # Build someguy command arguments
-    cmd_args = ['someguy']
+    cmd_args = ['someguy', 'start']
     cmd_args.extend(['--listen-address', '127.0.0.1:8190'])
     cmd_args.extend(['--dht', 'disabled'])
     
