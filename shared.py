@@ -460,7 +460,7 @@ def create_directory_via_mfs(files_dict: Dict[str, str], name_prefix: str = "dir
     try:
         # Create MFS directory (no need for --flush=false on mkdir)
         result = run_ipfs_cmd([
-            'files', 'mkdir', '-p', mfs_path
+            'files', 'mkdir', '-p', '--cid-version=1', mfs_path
         ], capture_output=True, text=True)
         
         if result.returncode != 0:
