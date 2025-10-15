@@ -11,6 +11,12 @@ import atexit
 from typing import List, Optional, Dict, Any, Tuple, Set
 from lxml import etree
 
+# MFS configuration constants
+MFS_FLUSH_LIMIT = 1024
+
+# Debug configuration
+DEBUG = os.environ.get('DEBUG', '').lower() in ('1', 'true', 'yes', 'on')
+
 def read_cids_from_file(file_path: str) -> List[str]:
     cids = []
     
@@ -75,13 +81,20 @@ def list_files_with_cids(cid: str) -> Dict[str, str]:
     """
     def walk_directory(dir_cid: str, path_prefix: str = "") -> Dict[str, str]:
         """Recursively walk an IPFS directory"""
-        result = run_ipfs_cmd(
-            ['ls', '--resolve-type=false', '--size=false', dir_cid],
-            capture_output=True,
-            text=True
-        )
-        if result.returncode != 0:
-            print(f"  Failed to list {dir_cid}: {result.stderr}", file=sys.stderr)
+        if DEBUG:
+            print(f"  DEBUG: Listing directory {dir_cid} (prefix: {path_prefix})", file=sys.stderr)
+        try:
+            result = run_ipfs_cmd(
+                ['ls', '--resolve-type=false', '--size=false', dir_cid],
+                capture_output=True,
+                text=True,
+                timeout=30  # Add timeout to prevent hanging
+            )
+            if result.returncode != 0:
+                print(f"  Failed to list {dir_cid}: {result.stderr}", file=sys.stderr)
+                return {}
+        except subprocess.TimeoutExpired:
+            print(f"  Timeout listing {dir_cid} after 30 seconds", file=sys.stderr)
             return {}
         
         files = {}
@@ -96,11 +109,21 @@ def list_files_with_cids(cid: str) -> Dict[str, str]:
                 
                 # Check if this is a directory by trying to list it
                 # If it fails, it's a file
-                subdir_result = run_ipfs_cmd(
-                    ['ls', '--resolve-type=false', '--size=false', item_cid],
-                    capture_output=True,
-                    text=True
-                )
+                if DEBUG:
+                    print(f"  DEBUG: Checking if {item_name} ({item_cid}) is directory", file=sys.stderr)
+                try:
+                    subdir_result = run_ipfs_cmd(
+                        ['ls', '--resolve-type=false', '--size=false', item_cid],
+                        capture_output=True,
+                        text=True,
+                        timeout=10  # Shorter timeout for type detection
+                    )
+                except subprocess.TimeoutExpired:
+                    if DEBUG:
+                        print(f"  DEBUG: Timeout checking {item_name}, assuming it's a file", file=sys.stderr)
+                    # Assume it's a file if we can't determine the type
+                    files[full_path] = item_cid
+                    continue
                 
                 if subdir_result.returncode == 0 and subdir_result.stdout.strip():
                     # It's a directory, recurse into it
@@ -298,7 +321,7 @@ def start_staging_ipfs(someguy=False):
             ensure_someguy_running()
         return _daemon_process
     
-    print("Starting staging IPFS daemon...", file=sys.stderr)
+    print("Starting staging IPFS daemon...", end="", file=sys.stderr)
     
     # Use the Python-based daemon startup
     from daemon_cmd import initialize_repo, configure_ipfs, start_daemon
@@ -332,6 +355,8 @@ def start_staging_ipfs(someguy=False):
         time.sleep(0.5)
     else:
         raise RuntimeError("IPFS daemon failed to become ready")
+    
+    print(" ready", file=sys.stderr)
     
     # Start someguy if requested
     if someguy:
@@ -462,6 +487,52 @@ def pin_cid(cid: str) -> bool:
         print(f"  ⚠️ Error pinning {cid}: {e}", file=sys.stderr)
         return False
 
+def generate_car_file(root_cid: str, output_path: str) -> bool:
+    """
+    Generate a CAR file for the given root CID.
+    
+    Args:
+        root_cid: The root CID to export
+        output_path: Path where to save the CAR file
+        
+    Returns:
+        True if successful, False otherwise
+        
+    Note: This exports the complete DAG. IPFS dag export doesn't support
+    depth limiting, so the entire DAG structure will be included.
+    For large HAMT-sharded directories, this may result in large CAR files.
+    """
+    try:
+        print(f"  Generating CAR file: {output_path}", file=sys.stderr)
+        print(f"  Root CID: {root_cid} (full DAG)", file=sys.stderr)
+        
+        # Use ipfs dag export to create CAR file
+        result = run_ipfs_cmd([
+            'dag', 'export', 
+            '--progress=false',  # Disable progress to keep output clean
+            root_cid
+        ], capture_output=True)
+        
+        if result.returncode != 0:
+            print(f"  ⚠️ Failed to export CAR: {result.stderr}", file=sys.stderr)
+            return False
+        
+        # Write the CAR data to file
+        with open(output_path, 'wb') as f:
+            f.write(result.stdout)
+        
+        # Get file size for user feedback
+        import os
+        file_size = os.path.getsize(output_path)
+        size_mb = file_size / (1024 * 1024)
+        print(f"  ✓ CAR file created: {output_path} ({size_mb:.1f} MB)", file=sys.stderr)
+        
+        return True
+        
+    except Exception as e:
+        print(f"  ⚠️ Error generating CAR file: {e}", file=sys.stderr)
+        return False
+
 def gc_repo():
     """Run garbage collection on the staging IPFS repo"""
     try:
@@ -504,6 +575,8 @@ def create_directory_via_mfs(files_dict: Dict[str, str], name_prefix: str = "dir
         # Copy each file to MFS with --flush=false for performance
         # MFS automatically handles HAMT sharding and uses dag-pb
         # Use --parents to automatically create intermediate directories
+        # Flush periodically to avoid hitting the unflushed operations limit
+        operation_count = 0
         for filename, file_cid in files_dict.items():
             result = run_ipfs_cmd([
                 'files', 'cp', '--flush=false', '--parents', f'/ipfs/{file_cid}', f'{mfs_path}/{filename}'
@@ -511,6 +584,20 @@ def create_directory_via_mfs(files_dict: Dict[str, str], name_prefix: str = "dir
             
             if result.returncode != 0:
                 print(f"    ⚠️ Warning: Failed to add {filename}: {result.stderr}", file=sys.stderr)
+            else:
+                operation_count += 1
+                
+                # Flush every (MFS_FLUSH_LIMIT - 1) operations to stay under the limit
+                if operation_count >= (MFS_FLUSH_LIMIT - 1):
+                    print(f"    Flushing after {operation_count} operations...", file=sys.stderr)
+                    flush_result = run_ipfs_cmd([
+                        'files', 'flush', mfs_path
+                    ], capture_output=True, text=True)
+                    
+                    if flush_result.returncode != 0:
+                        print(f"    ⚠️ Warning: Failed to flush MFS directory: {flush_result.stderr}", file=sys.stderr)
+                    
+                    operation_count = 0
         
         # Manually flush the directory to ensure consistency and get final CID
         result = run_ipfs_cmd([

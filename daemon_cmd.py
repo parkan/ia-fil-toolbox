@@ -44,7 +44,10 @@ def configure_ipfs():
     env = os.environ.copy()
     env['IPFS_PATH'] = repo_dir
     
-    print("Configuring staging IPFS node...", file=sys.stderr)
+    print("Configuring staging IPFS node...", end="", file=sys.stderr)
+    
+    # Import here to avoid circular imports
+    from shared import MFS_FLUSH_LIMIT
     
     configs = [
         # Set API port to 5009 to avoid conflicts
@@ -77,6 +80,9 @@ def configure_ipfs():
         # Use CIDv1 by default for Filecoin compatibility
         (['config', '--json', 'Datastore.StorageMax', '"10GB"'], "Storage limit"),
         (['config', '--json', 'Import.CidVersion', '1'], "CIDv1 default"),
+        
+        # Increase MFS unflushed operations limit for large directories
+        (['config', '--json', 'Internal.MFSNoFlushLimit', str(MFS_FLUSH_LIMIT)], "MFS flush limit"),
     ]
     
     for cmd, description in configs:
@@ -84,7 +90,7 @@ def configure_ipfs():
         if result.returncode != 0:
             print(f"Warning: Failed to configure {description}: {result.stderr}", file=sys.stderr)
     
-    print("IPFS configuration complete", file=sys.stderr)
+    print(" complete", file=sys.stderr)
 
 
 def start_daemon():
@@ -97,7 +103,7 @@ def start_daemon():
     env = os.environ.copy()
     env['IPFS_PATH'] = repo_dir
     
-    print("Starting IPFS daemon on port 5009...", file=sys.stderr)
+    print("Starting IPFS daemon on port 5009...", end="", file=sys.stderr)
     
     # Create temporary log files for daemon output
     stdout_log = tempfile.NamedTemporaryFile(
@@ -158,14 +164,17 @@ def start_daemon():
                 timeout=2
             )
             if result.returncode == 0:
-                print("IPFS daemon is ready", file=sys.stderr)
+                print(" ready", file=sys.stderr)
                 
                 # Store the process object globally for proper cleanup
                 global _daemon_process_obj, _daemon_log_files
                 _daemon_process_obj = daemon_process
                 _daemon_log_files = (stdout_log.name, stderr_log.name)
                 
-                print(f"IPFS logs: stdout={stdout_log.name}, stderr={stderr_log.name}", file=sys.stderr)
+                # Only show log paths in debug mode
+                from shared import DEBUG
+                if DEBUG:
+                    print(f"IPFS logs: stdout={stdout_log.name}, stderr={stderr_log.name}", file=sys.stderr)
                 return daemon_process.pid
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
             pass
@@ -278,7 +287,7 @@ def start_someguy():
     except:
         pass  # Not running, proceed to start it
     
-    print("Starting someguy daemon...", file=sys.stderr)
+    print("Starting someguy daemon on port 8190...", end="", file=sys.stderr)
     
     # Create temporary log files for someguy output
     stdout_log = tempfile.NamedTemporaryFile(
@@ -350,11 +359,16 @@ def start_someguy():
     
     # Start someguy daemon
     try:
+        # Set up environment with debug logging
+        env = os.environ.copy()
+        env['GOLOG_LOG_LEVEL'] = 'debug'
+        
         someguy_process = subprocess.Popen(
             cmd_args,
             stdout=stdout_log,
             stderr=stderr_log,
-            text=True
+            text=True,
+            env=env
         )
         
         # Wait a moment for startup
@@ -376,8 +390,11 @@ def start_someguy():
         _someguy_process_obj = someguy_process
         _someguy_log_files = (stdout_log.name, stderr_log.name)
         
-        print("someguy daemon is ready", file=sys.stderr)
-        print(f"someguy logs: stdout={stdout_log.name}, stderr={stderr_log.name}", file=sys.stderr)
+        print(" ready", file=sys.stderr)
+        # Only show log paths in debug mode
+        from shared import DEBUG
+        if DEBUG:
+            print(f"someguy logs: stdout={stdout_log.name}, stderr={stderr_log.name}", file=sys.stderr)
         return someguy_process.pid
         
     except FileNotFoundError:

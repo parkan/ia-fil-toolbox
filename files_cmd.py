@@ -192,5 +192,25 @@ def run_files(cids: List[str]):
         for identifier, synthetic_cid in all_results:
             print(f"{identifier},{synthetic_cid}")
         
+        # Create container directory with all synthetic directories
+        print("\nCreating container directory...", file=sys.stderr)
+        container_files = {}
+        for identifier, synthetic_cid in all_results:
+            container_files[identifier] = synthetic_cid
+        
+        from shared import create_directory_via_mfs, generate_car_file, pin_cid
+        container_cid = create_directory_via_mfs(container_files, "extract_items_container")
+        
+        if container_cid:
+            print(f"\n📁 Container directory (MFS root): {container_cid}", file=sys.stderr)
+            print(container_cid)  # Also print to stdout for easy access
+            
+            # Pin the container directory
+            pin_cid(container_cid)
+            
+            # Generate CAR file
+            car_filename = f"extract_items_{container_cid}.car"
+            generate_car_file(container_cid, car_filename)
+        
         # Clean up temporary blocks after pinning what we want to keep
         gc_repo()

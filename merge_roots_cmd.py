@@ -85,6 +85,12 @@ def run_merge_roots(cids: List[str]):
     
     if merged_cid:
         print(merged_cid)  # Output just the CID for easy scripting
+        
+        # Generate CAR file
+        from shared import generate_car_file
+        car_filename = f"merge_roots_{merged_cid}.car"
+        generate_car_file(merged_cid, car_filename)
+        
         # Clean up temporary blocks after pinning what we want to keep
         gc_repo()
     else:
