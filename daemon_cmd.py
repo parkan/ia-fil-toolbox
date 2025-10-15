@@ -165,6 +165,7 @@ def start_daemon():
                 _daemon_process_obj = daemon_process
                 _daemon_log_files = (stdout_log.name, stderr_log.name)
                 
+                print(f"IPFS logs: stdout={stdout_log.name}, stderr={stderr_log.name}", file=sys.stderr)
                 return daemon_process.pid
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
             pass
@@ -376,6 +377,7 @@ def start_someguy():
         _someguy_log_files = (stdout_log.name, stderr_log.name)
         
         print("someguy daemon is ready", file=sys.stderr)
+        print(f"someguy logs: stdout={stdout_log.name}, stderr={stderr_log.name}", file=sys.stderr)
         return someguy_process.pid
         
     except FileNotFoundError:
@@ -384,6 +386,24 @@ def start_someguy():
     except Exception as e:
         print(f"Error starting someguy: {e}", file=sys.stderr)
         return None
+
+def stop_someguy():
+    """Stop the someguy daemon"""
+    global _someguy_process_obj
+    
+    if _someguy_process_obj:
+        try:
+            _someguy_process_obj.terminate()
+            _someguy_process_obj.wait(timeout=5)
+            print("someguy daemon stopped", file=sys.stderr)
+        except:
+            try:
+                _someguy_process_obj.kill()
+                print("someguy daemon stopped (forced)", file=sys.stderr)
+            except:
+                print("Failed to stop someguy daemon", file=sys.stderr)
+        finally:
+            _someguy_process_obj = None
 
 def ensure_someguy_running():
     """Check if someguy is running, start if needed"""
@@ -439,16 +459,8 @@ def run_persistent_daemons(someguy=True):
         print("\nShutting down daemons...", file=sys.stderr)
         
         # Stop someguy first (only if we started it)
-        if someguy_pid and someguy_pid != -1 and _someguy_process_obj:
-            try:
-                _someguy_process_obj.terminate()
-                _someguy_process_obj.wait(timeout=5)
-                print("someguy daemon stopped", file=sys.stderr)
-            except:
-                try:
-                    _someguy_process_obj.kill()
-                except:
-                    pass
+        if someguy_pid and someguy_pid != -1:
+            stop_someguy()
         elif someguy_external:
             print("Note: External someguy daemon left running", file=sys.stderr)
         

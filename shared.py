@@ -364,8 +364,15 @@ def start_staging_ipfs(someguy=False):
     return _daemon_process
 
 def stop_staging_ipfs():
-    """Stop the staging IPFS daemon"""
+    """Stop the staging IPFS daemon and someguy"""
     global _daemon_process
+    
+    # Stop someguy first if it's running
+    try:
+        from daemon_cmd import stop_someguy
+        stop_someguy()
+    except ImportError:
+        pass  # daemon_cmd not available
     
     if _daemon_process and _daemon_process.poll() is None:
         print("Stopping staging IPFS daemon...", file=sys.stderr)
