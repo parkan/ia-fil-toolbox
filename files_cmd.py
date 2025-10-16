@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Tuple, Optional
 from lxml import etree
 from shared import (read_cids_from_file, list_files, list_files_with_cids, log_errors, xml_to_dict,
                    fetch_xml_files_parallel, validate_xml_completeness, run_ipfs_cmd, pin_cid, gc_repo, 
-                   create_directory_via_mfs)
+                   create_directory_via_mfs, DEBUG)
 
 def parse_files_xml(xml_content: bytes) -> List[Dict[str, Any]]:
     files_dict = xml_to_dict(xml_content)
@@ -76,10 +76,11 @@ def create_synthetic_directory(cid: str, identifier: str, files_data: List[Dict[
         
         # Use MFS to create directory - automatically handles dag-pb and HAMT sharding
         dir_cid = create_directory_via_mfs(files_dict, f"item_{identifier}")
-        print(f"      ✓ Created synthetic directory: {dir_cid}")
+        print(f"      ✓ Created synthetic directory: {dir_cid}", file=sys.stderr)
         
         # Pin the synthetic directory to prevent GC
-        pin_cid(dir_cid)
+        # Temporarily disabled - pinning can hang when fetching remote blocks
+        # pin_cid(dir_cid)
         return dir_cid
             
     except Exception as e:
@@ -119,15 +120,18 @@ def process_cid_files(cid: str) -> List[Tuple[str, str]]:
     print(f"\nProcessing files for CID: {cid}", file=sys.stderr)
     results = []
     
-    print("  Listing files...", file=sys.stderr)
-    all_files = list_files_with_cids(cid)
-    if not all_files:
+    print("  Finding XML files...", file=sys.stderr)
+    # First pass: minimal listing to find XML files only (no optimization needed)
+    # We'll use the simple list_files function which doesn't do recursive traversal
+    from shared import list_files
+    xml_files = list_files(cid)
+    if not xml_files:
         error_msg = f"{cid}\t*\tIPFS_ERROR\tNo files found or failed to list files"
         log_errors([error_msg])
         return results
     
-    meta_files = [f for f in all_files.keys() if f.endswith('_meta.xml')]
-    files_files = [f for f in all_files.keys() if f.endswith('_files.xml')]
+    meta_files = [f for f in xml_files if f.endswith('_meta.xml')]
+    files_files = [f for f in xml_files if f.endswith('_files.xml')]
     
     if not meta_files and not files_files:
         error_msg = f"{cid}\t*\tIPFS_ERROR\tNo XML files found"
@@ -142,8 +146,46 @@ def process_cid_files(cid: str) -> List[Tuple[str, str]]:
     print(f"  Processing {len(all_identifiers)} identifiers", file=sys.stderr)
     
     print("  Fetching XML files...", file=sys.stderr)
-    xml_results = fetch_xml_files_parallel(cid, all_identifiers, {'meta', 'files'})
+    # We need to get CIDs for the XML files - but we can do this with simple top-level listing
+    # Use the simple list_files_with_cids but only for the root directory (no recursion)
+    from shared import run_ipfs_cmd
+    result = run_ipfs_cmd(['ls', '--resolve-type=false', '--size=false', cid], capture_output=True, text=True)
+    if result.returncode != 0:
+        error_msg = f"{cid}\t*\tIPFS_ERROR\tFailed to list root directory: {result.stderr}"
+        log_errors([error_msg])
+        return results
     
+    # Parse the simple listing to get XML file CIDs
+    xml_files_with_cids = {}
+    for line in result.stdout.strip().split('\n'):
+        if not line:
+            continue
+        parts = line.split(maxsplit=1)
+        if len(parts) == 2:
+            file_cid = parts[0]
+            filename = parts[1]
+            if filename in meta_files + files_files:
+                xml_files_with_cids[filename] = file_cid
+    
+    # Fetch XML files directly by CID
+    xml_results = {}
+    for identifier in all_identifiers:
+        xml_results[identifier] = {}
+        for xml_type in ['meta', 'files']:
+            filename = f"{identifier}_{xml_type}.xml"
+            if filename in xml_files_with_cids:
+                file_cid = xml_files_with_cids[filename]
+                try:
+                    result = run_ipfs_cmd(['cat', file_cid], capture_output=True)
+                    if result.returncode == 0:
+                        xml_results[identifier][xml_type] = result.stdout
+                        print(f"    ✓ Fetched {filename}", file=sys.stderr)
+                    else:
+                        print(f"    ✗ Failed to fetch {filename}: {result.stderr}", file=sys.stderr)
+                except Exception as e:
+                    print(f"    ✗ Exception fetching {filename}: {e}", file=sys.stderr)
+    
+    # Validate completeness early - no point processing if we don't have complete pairs
     print("  Validating completeness...", file=sys.stderr)
     valid_identifiers = validate_xml_completeness(cid, all_identifiers, xml_results, {'meta', 'files'})
     
@@ -151,10 +193,35 @@ def process_cid_files(cid: str) -> List[Tuple[str, str]]:
         print("  No complete meta/files pairs found", file=sys.stderr)
         return results
     
+    # Extract all known filenames from files.xml for optimization
+    # Only process valid identifiers
+    print("  Extracting known filenames from files.xml...", file=sys.stderr)
+    known_files = set()
+    for identifier in valid_identifiers:
+        xml_data = xml_results[identifier]
+        if 'files' in xml_data:
+            try:
+                files_data = parse_files_xml(xml_data['files'])
+                for file_info in files_data:
+                    filename = file_info.get('name', '')
+                    if filename:
+                        known_files.add(filename)
+            except Exception as e:
+                if DEBUG:
+                    print(f"  DEBUG: Failed to parse files.xml for {identifier}: {e}", file=sys.stderr)
+    
+    print(f"  Found {len(known_files)} known filenames from files.xml", file=sys.stderr)
+    if DEBUG and known_files:
+        print(f"  DEBUG: Sample known files: {list(sorted(known_files))[:10]}", file=sys.stderr)
+    
+    # Second pass: comprehensive listing with known filenames for optimization
+    print("  Listing all files with optimization...", file=sys.stderr)
+    all_files = list_files_with_cids(cid, known_files)
+    
     print(f"  Processing {len(valid_identifiers)} complete pairs...", file=sys.stderr)
     
-    for identifier in valid_identifiers:
-        print(f"    Processing {identifier}...", file=sys.stderr)
+    for i, identifier in enumerate(valid_identifiers, 1):
+        print(f"    Processing {identifier} ({i}/{len(valid_identifiers)})...", file=sys.stderr)
         
         files_content = xml_results[identifier]['files']
         
@@ -165,6 +232,9 @@ def process_cid_files(cid: str) -> List[Tuple[str, str]]:
             synthetic_cid = process_file_list(cid, identifier, files_data, all_files)
             if synthetic_cid:
                 results.append((identifier, synthetic_cid))
+                print(f"      ✓ Completed {identifier}", file=sys.stderr)
+            else:
+                print(f"      ✗ Failed to create synthetic directory for {identifier}", file=sys.stderr)
                 
         except etree.XMLSyntaxError as e:
             error_msg = f"{cid}\t{identifier}\tDATA_ERROR\tXML parse error: {str(e)}"
@@ -173,7 +243,7 @@ def process_cid_files(cid: str) -> List[Tuple[str, str]]:
             error_msg = f"{cid}\t{identifier}\tDATA_ERROR\t{str(e)}"
             log_errors([error_msg])
     
-    print(f"  Completed {cid}", file=sys.stderr)
+    print(f"  Completed processing all identifiers for {cid}", file=sys.stderr)
     return results
 
 def run_files(cids: List[str]):
@@ -195,10 +265,12 @@ def run_files(cids: List[str]):
         # Create container directory with all synthetic directories
         print("\nCreating container directory...", file=sys.stderr)
         container_files = {}
+        child_cids = []
         for identifier, synthetic_cid in all_results:
             container_files[identifier] = synthetic_cid
+            child_cids.append(synthetic_cid)
         
-        from shared import create_directory_via_mfs, generate_car_file, pin_cid
+        from shared import create_directory_via_mfs, generate_shallow_car_file, pin_cid
         container_cid = create_directory_via_mfs(container_files, "extract_items_container")
         
         if container_cid:
@@ -206,11 +278,13 @@ def run_files(cids: List[str]):
             print(container_cid)  # Also print to stdout for easy access
             
             # Pin the container directory
-            pin_cid(container_cid)
+            # Temporarily disabled - pinning can hang when fetching remote blocks
+            # pin_cid(container_cid)
             
-            # Generate CAR file
+            # Generate shallow CAR file with just the directory structure
             car_filename = f"extract_items_{container_cid}.car"
-            generate_car_file(container_cid, car_filename)
+            generate_shallow_car_file(container_cid, child_cids, car_filename)
         
         # Clean up temporary blocks after pinning what we want to keep
-        gc_repo()
+        # Temporarily disabled for rapid iteration - keeping blocks in blockstore
+        # gc_repo()

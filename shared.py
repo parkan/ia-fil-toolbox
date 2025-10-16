@@ -17,25 +17,6 @@ MFS_FLUSH_LIMIT = 1024
 # Debug configuration
 DEBUG = os.environ.get('DEBUG', '').lower() in ('1', 'true', 'yes', 'on')
 
-# File extensions that are almost certainly files (not directories)
-FILE_EXTENSIONS = {
-    # Images
-    '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.tif', '.webp', '.svg', '.ico',
-    # Videos
-    '.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.3gp', '.ogv',
-    # Audio
-    '.mp3', '.wav', '.flac', '.aac', '.ogg', '.wma', '.m4a', '.opus',
-    # Documents
-    '.pdf', '.doc', '.docx', '.txt', '.rtf', '.odt', '.pages',
-    # Archives
-    '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz', '.tar.gz', '.tar.bz2',
-    # Data
-    '.json', '.xml', '.csv', '.tsv', '.yaml', '.yml',
-    # Code
-    '.py', '.js', '.html', '.css', '.java', '.cpp', '.c', '.h', '.php', '.rb', '.go',
-    # Other common file types
-    '.log', '.db', '.sqlite', '.sql', '.iso', '.dmg', '.exe', '.msi', '.deb', '.rpm'
-}
 
 def read_cids_from_file(file_path: str) -> List[str]:
     cids = []
@@ -92,14 +73,18 @@ def list_files(cid: str) -> List[str]:
             out.append(filename)
     return out
 
-def list_files_with_cids(cid: str) -> Dict[str, str]:
+def list_files_with_cids(cid: str, known_files: Optional[Set[str]] = None) -> Dict[str, str]:
     """
     List files in a CID with their individual CIDs, recursively walking subdirectories
+    
+    Args:
+        cid: Root CID to list
+        known_files: Optional set of known filenames (from files.xml) to avoid probing
     
     Returns:
         Dict mapping full_path -> file_cid (e.g., "subdir/file.txt" -> "bafk...")
     """
-    def walk_directory(dir_cid: str, path_prefix: str = "") -> Dict[str, str]:
+    def walk_directory(dir_cid: str, path_prefix: str = "", known_files: Optional[Set[str]] = None) -> Dict[str, str]:
         """Recursively walk an IPFS directory"""
         if DEBUG:
             print(f"  DEBUG: Listing directory {dir_cid} (prefix: {path_prefix})", file=sys.stderr)
@@ -127,14 +112,9 @@ def list_files_with_cids(cid: str) -> Dict[str, str]:
                 item_name = parts[1]
                 full_path = f"{path_prefix}{item_name}" if path_prefix else item_name
                 
-                # Use filename extension heuristic to avoid unnecessary network calls
-                item_name_lower = item_name.lower()
-                has_file_extension = any(item_name_lower.endswith(ext) for ext in FILE_EXTENSIONS)
-                
-                if has_file_extension:
-                    # Skip directory check for files with known extensions
-                    if DEBUG:
-                        print(f"  DEBUG: Skipping directory check for {item_name} (has file extension)", file=sys.stderr)
+                # Check if this is a known file from files.xml
+                if known_files and full_path in known_files:
+                    # Skip directory check for files listed in files.xml
                     files[full_path] = item_cid
                     continue
                 
@@ -158,7 +138,7 @@ def list_files_with_cids(cid: str) -> Dict[str, str]:
                 
                 if subdir_result.returncode == 0 and subdir_result.stdout.strip():
                     # It's a directory, recurse into it
-                    subdir_files = walk_directory(item_cid, f"{full_path}/")
+                    subdir_files = walk_directory(item_cid, f"{full_path}/", known_files=known_files)
                     files.update(subdir_files)
                 else:
                     # It's a file
@@ -166,7 +146,7 @@ def list_files_with_cids(cid: str) -> Dict[str, str]:
         
         return files
     
-    return walk_directory(cid)
+    return walk_directory(cid, known_files=known_files)
 
 def fetch_file(cid: str, filename: str) -> Optional[bytes]:
     try:
@@ -507,15 +487,129 @@ def ensure_staging_ipfs(someguy=False):
 def pin_cid(cid: str) -> bool:
     """Pin a CID in the staging IPFS node"""
     try:
-        result = run_ipfs_cmd(['pin', 'add', cid], capture_output=True, text=True)
+        if DEBUG:
+            print(f"  DEBUG: Pinning {cid}...", file=sys.stderr)
+        
+        result = run_ipfs_cmd(
+            ['pin', 'add', '--progress=false', cid], 
+            capture_output=True, 
+            text=True,
+            timeout=300  # 5 minute timeout
+        )
         if result.returncode == 0:
-            print(f"  ✓ Pinned {cid}", file=sys.stderr)
+            if DEBUG:
+                print(f"  ✓ Pinned {cid}", file=sys.stderr)
             return True
         else:
             print(f"  ⚠️ Failed to pin {cid}: {result.stderr}", file=sys.stderr)
             return False
+    except subprocess.TimeoutExpired:
+        print(f"  ⚠️ Timeout pinning {cid} after 5 minutes", file=sys.stderr)
+        return False
     except Exception as e:
         print(f"  ⚠️ Error pinning {cid}: {e}", file=sys.stderr)
+        return False
+
+def generate_shallow_car_file(root_cid: str, child_cids: List[str], output_path: str) -> bool:
+    """
+    Generate a shallow CAR file containing only the root block and immediate child blocks.
+    Fetches only the directory blocks, not the files they reference.
+    Uses go-car put-block command to create proper CAR files.
+    
+    Args:
+        root_cid: The root CID (container directory)
+        child_cids: List of child CIDs (item directories) to include
+        output_path: Path where to save the CAR file
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        print(f"  Generating shallow CAR file: {output_path}", file=sys.stderr)
+        print(f"  Root CID: {root_cid}", file=sys.stderr)
+        print(f"  Including {len(child_cids)} child directory blocks", file=sys.stderr)
+        
+        # 1. Create CAR file with root block
+        root_block_result = run_ipfs_cmd(['block', 'get', root_cid], capture_output=True)
+        if root_block_result.returncode != 0:
+            print(f"  ⚠️ Failed to get root block: {root_block_result.stderr}", file=sys.stderr)
+            return False
+        
+        # Use dag-pb codec for UnixFS directories, CARv2 for append support
+        car_cmd = [
+            'car', 'put-block',
+            '--codec=dag-pb',
+            '--set-root',
+            '--version=2',
+            output_path
+        ]
+        
+        car_result = subprocess.run(
+            car_cmd,
+            input=root_block_result.stdout,
+            capture_output=True
+        )
+        
+        if car_result.returncode != 0:
+            stderr_text = car_result.stderr.decode('utf-8', errors='replace')
+            print(f"  ⚠️ Failed to create CAR with root block: {stderr_text}", file=sys.stderr)
+            return False
+        
+        # Verify the CID matches (car put-block outputs the CID)
+        output_cid = car_result.stdout.decode('utf-8').strip()
+        if output_cid != root_cid:
+            print(f"  ⚠️ CID mismatch! Expected {root_cid}, got {output_cid}", file=sys.stderr)
+            return False
+        
+        if DEBUG:
+            print(f"  DEBUG: Root block added, CID verified: {output_cid}", file=sys.stderr)
+        
+        # 2. Append child blocks
+        for i, child_cid in enumerate(child_cids, 1):
+            if DEBUG:
+                print(f"  DEBUG: Adding child block {i}/{len(child_cids)}: {child_cid}", file=sys.stderr)
+            
+            child_block_result = run_ipfs_cmd(['block', 'get', child_cid], capture_output=True)
+            if child_block_result.returncode != 0:
+                print(f"  ⚠️ Failed to get block {child_cid}: {child_block_result.stderr}", file=sys.stderr)
+                continue
+            
+            # Append to existing CAR file (no --set-root)
+            car_cmd = [
+                'car', 'put-block',
+                '--codec=dag-pb',
+                '--version=2',
+                output_path
+            ]
+            
+            car_result = subprocess.run(
+                car_cmd,
+                input=child_block_result.stdout,
+                capture_output=True
+            )
+            
+            if car_result.returncode != 0:
+                stderr_text = car_result.stderr.decode('utf-8', errors='replace')
+                print(f"  ⚠️ Failed to add block {child_cid}: {stderr_text}", file=sys.stderr)
+                continue
+            
+            # Verify CID
+            output_cid = car_result.stdout.decode('utf-8').strip()
+            if output_cid != child_cid:
+                print(f"  ⚠️ CID mismatch for child! Expected {child_cid}, got {output_cid}", file=sys.stderr)
+                continue
+        
+        # Get file size for user feedback
+        file_size = os.path.getsize(output_path)
+        size_kb = file_size / 1024
+        print(f"  ✓ Shallow CAR file created: {output_path} ({size_kb:.1f} KB, {len(child_cids) + 1} blocks)", file=sys.stderr)
+        
+        return True
+        
+    except Exception as e:
+        print(f"  ⚠️ Error generating shallow CAR file: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
         return False
 
 def generate_car_file(root_cid: str, output_path: str) -> bool:
@@ -608,7 +702,11 @@ def create_directory_via_mfs(files_dict: Dict[str, str], name_prefix: str = "dir
         # Use --parents to automatically create intermediate directories
         # Flush periodically to avoid hitting the unflushed operations limit
         operation_count = 0
-        for filename, file_cid in files_dict.items():
+        total_files = len(files_dict)
+        for i, (filename, file_cid) in enumerate(files_dict.items(), 1):
+            if DEBUG:
+                print(f"    DEBUG: Adding file {i}/{total_files}: {filename} ({file_cid})", file=sys.stderr)
+            
             result = run_ipfs_cmd([
                 'files', 'cp', '--flush=false', '--parents', f'/ipfs/{file_cid}', f'{mfs_path}/{filename}'
             ], capture_output=True, text=True)
