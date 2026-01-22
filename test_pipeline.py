@@ -623,5 +623,67 @@ class TestIAFilToolbox(unittest.TestCase):
         finally:
             pass
 
+    def test_extract_then_collect(self):
+        """Integration test: extract-items creates synthetic dirs, collect wraps them"""
+        from shared import ensure_staging_ipfs
+        ensure_staging_ipfs()
+
+        # add test fixtures
+        result, error = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "add", "-r", "--cid-version=1", "test_fixtures"])
+        self.assertIsNotNone(result, f"Failed to add test_fixtures: {error}")
+
+        root_cid = None
+        for line in result.split('\n'):
+            if line.strip().endswith('test_fixtures'):
+                root_cid = line.split()[1]
+                break
+        self.assertIsNotNone(root_cid, "Could not find root CID")
+
+        # run extract-items to create synthetic directories
+        extract_result, extract_error = run_cmd(["python3", "ia_fil.py", "--no-someguy", "extract-items", root_cid])
+        self.assertIsNotNone(extract_result, f"extract-items failed: {extract_error}")
+
+        # parse CSV output to get synthetic CIDs
+        lines = extract_result.strip().split('\n')
+        csv_lines = [line for line in lines if ',' in line and not line.startswith('  ')]
+        self.assertGreaterEqual(len(csv_lines), 2, "Expected CSV output from extract-items")
+
+        synthetic_cids = []
+        for line in csv_lines[1:]:  # skip header
+            parts = line.split(',', 1)
+            if len(parts) == 2:
+                synthetic_cids.append(parts[1])  # cid is second column
+
+        self.assertGreater(len(synthetic_cids), 0, "No synthetic CIDs produced")
+
+        # now collect the synthetic directories
+        collect_result, collect_error = run_cmd(["python3", "ia_fil.py", "--no-someguy", "collect"] + synthetic_cids)
+        self.assertIsNotNone(collect_result, f"collect failed: {collect_error}")
+
+        collection_cid = collect_result.strip()
+        self.assertTrue(collection_cid.startswith(('Qm', 'bafy')), f"Invalid collection CID: {collection_cid}")
+
+        # verify collection contains entries for each synthetic directory
+        ls_result, ls_error = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "ls", "--size=false", "--resolve-type=false", collection_cid])
+        self.assertIsNotNone(ls_result, f"Failed to list collection: {ls_error}")
+
+        entries = []
+        for line in ls_result.split('\n'):
+            if line.strip():
+                parts = line.split()
+                if len(parts) >= 2:
+                    entries.append(parts[1])  # entry name
+
+        # each synthetic CID should appear as an entry name
+        for syn_cid in synthetic_cids:
+            self.assertIn(syn_cid, entries, f"Synthetic CID {syn_cid} not in collection")
+
+        # verify we can traverse collection -> synthetic dir -> file
+        first_syn = synthetic_cids[0]
+        deep_ls, deep_error = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "ls", "--size=false", "--resolve-type=false", f"{collection_cid}/{first_syn}"])
+        self.assertIsNotNone(deep_ls, f"Failed to traverse into collected item: {deep_error}")
+        # should see item files
+        self.assertTrue(len(deep_ls.strip()) > 0, "Collected item should have contents")
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
