@@ -408,8 +408,8 @@ class TestIAFilToolbox(unittest.TestCase):
                                 if len(parts) >= 2:
                                     thumbs_files.append(parts[1])
                         
-                        self.assertEqual(set(thumbs_files), {'thumb_001.jpg'},
-                                       f"videos.thumbs should contain thumb_001.jpg, got {thumbs_files}")
+                        self.assertEqual(set(thumbs_files), {'thumb_001.jpg', 'thumb_002.jpg'},
+                                       f"videos.thumbs should contain thumb files, got {thumbs_files}")
                         
                 else:  # item2
                     # item2 only has files at the root level
