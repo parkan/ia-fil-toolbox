@@ -29,15 +29,15 @@ def cli(ctx, someguy):
     ctx.ensure_object(dict)
     ctx.obj['someguy'] = someguy
     
-    # Ensure daemon is running for all commands (except daemon management and utility commands)
-    if ctx.invoked_subcommand not in ['run-daemons', 'daemon-status', 'completion']:
-        ensure_staging_ipfs(someguy=someguy)
+    # Note: Daemon startup is deferred to individual commands to avoid
+    # starting daemons when just showing help or when arguments are invalid
 
 @cli.command()
 @click.argument('cids', nargs=-1)
 @click.option('-f', '--file', type=click.Path(exists=True), help='File containing CIDs (plain text or CSV with "cid" column)')
 @click.option('--db', default='metadata.db', help='SQLite database path')
-def metadata(cids, file, db):
+@click.pass_context
+def metadata(ctx, cids, file, db):
     """Fetch and parse metadata files"""
     from metadata_cmd import run_metadata
     
@@ -50,12 +50,16 @@ def metadata(cids, file, db):
         click.echo("Error: Must provide either CIDs as arguments or use --file option", err=True)
         raise click.Abort()
     
+    # Start daemon now that we know arguments are valid
+    ensure_staging_ipfs(someguy=ctx.obj['someguy'])
+    
     run_metadata(cid_list, db)
 
 @cli.command()
 @click.argument('cids', nargs=-1)
 @click.option('-f', '--file', type=click.Path(exists=True), help='File containing CIDs (plain text or CSV with "cid" column)')
-def extract_items(cids, file):
+@click.pass_context
+def extract_items(ctx, cids, file):
     """Extract items from _files.xml into directories"""
     from files_cmd import run_files
 
@@ -68,12 +72,18 @@ def extract_items(cids, file):
         click.echo("Error: Must provide either CIDs as arguments or use --file option", err=True)
         raise click.Abort()
 
+    # Start daemon now that we know arguments are valid
+    ensure_staging_ipfs(someguy=ctx.obj['someguy'])
+
     run_files(cid_list)
 
 @cli.command()
 @click.argument('cids', nargs=-1)
 @click.option('-f', '--file', type=click.Path(exists=True), help='File containing CIDs (plain text or CSV with "cid" column)')
-def merge_roots(cids, file):
+@click.option('--force-check-directories', is_flag=True, default=False,
+              help='Force expensive directory checks (default: use file extension heuristics)')
+@click.pass_context
+def merge_roots(ctx, cids, file, force_check_directories):
     """Merge multiple root CIDs into single directory"""
     from merge_roots_cmd import run_merge_roots
 
@@ -86,7 +96,10 @@ def merge_roots(cids, file):
         click.echo("Error: Must provide either CIDs as arguments or use --file option", err=True)
         raise click.Abort()
 
-    run_merge_roots(cid_list)
+    # Start daemon now that we know arguments are valid
+    ensure_staging_ipfs(someguy=ctx.obj['someguy'])
+
+    run_merge_roots(cid_list, force_check_directories=force_check_directories)
 
 @cli.command()
 @click.pass_context

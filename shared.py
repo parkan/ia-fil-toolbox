@@ -73,13 +73,43 @@ def list_files(cid: str) -> List[str]:
             out.append(filename)
     return out
 
-def list_files_with_cids(cid: str, known_files: Optional[Set[str]] = None) -> Dict[str, str]:
+def has_file_extension(filename: str) -> bool:
+    """
+    Check if a filename has a common file extension, suggesting it's likely a file not a directory.
+    Used as a heuristic to avoid expensive directory checks when force_check_directories is False.
+    """
+    common_extensions = {
+        # Archives
+        '.zip', '.tar', '.gz', '.bz2', '.xz', '.7z', '.rar', '.iso', '.warc',
+        # Documents
+        '.pdf', '.doc', '.docx', '.txt', '.md', '.rtf', '.odt',
+        # Images
+        '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg', '.webp', '.ico',
+        # Video
+        '.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm', '.mpeg', '.mpg',
+        # Audio
+        '.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a', '.wma',
+        # Data
+        '.json', '.xml', '.csv', '.tsv', '.yaml', '.yml', '.sql',
+        # Code
+        '.py', '.js', '.java', '.c', '.cpp', '.h', '.go', '.rs', '.sh',
+        # Web
+        '.html', '.htm', '.css', '.scss', '.less',
+        # Misc
+        '.log', '.dat', '.bin', '.torrent', '.sqlite', '.db', '.idx'
+    }
+    
+    name_lower = filename.lower()
+    return any(name_lower.endswith(ext) for ext in common_extensions)
+
+def list_files_with_cids(cid: str, known_files: Optional[Set[str]] = None, force_check_directories: bool = True) -> Dict[str, str]:
     """
     List files in a CID with their individual CIDs, recursively walking subdirectories
     
     Args:
         cid: Root CID to list
         known_files: Optional set of known filenames (from files.xml) to avoid probing
+        force_check_directories: If False, use file extension heuristics to skip directory checks
     
     Returns:
         Dict mapping full_path -> file_cid (e.g., "subdir/file.txt" -> "bafk...")
@@ -116,6 +146,14 @@ def list_files_with_cids(cid: str, known_files: Optional[Set[str]] = None) -> Di
                 if known_files and full_path in known_files:
                     # Skip directory check for files listed in files.xml
                     files[full_path] = item_cid
+                    continue
+                
+                # If force_check_directories is False, use filename heuristic
+                if not force_check_directories and has_file_extension(item_name):
+                    # Assume it's a file based on extension
+                    files[full_path] = item_cid
+                    if DEBUG:
+                        print(f"  DEBUG: Assuming {item_name} is file (extension heuristic)", file=sys.stderr)
                     continue
                 
                 # Check if this is a directory by trying to list it
@@ -574,11 +612,10 @@ def generate_shallow_car_file(root_cid: str, child_cids: List[str], output_path:
                 print(f"  ⚠️ Failed to get block {child_cid}: {child_block_result.stderr}", file=sys.stderr)
                 continue
             
-            # Append to existing CAR file (no --set-root)
+            # Append to existing CAR file (no --set-root, no --version)
             car_cmd = [
                 'car', 'put-block',
                 '--codec=dag-pb',
-                '--version=2',
                 output_path
             ]
             

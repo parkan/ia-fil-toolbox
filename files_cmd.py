@@ -3,86 +3,146 @@ import subprocess
 from typing import List, Dict, Any, Tuple, Optional
 from lxml import etree
 from shared import (read_cids_from_file, list_files, list_files_with_cids, log_errors, xml_to_dict,
-                   fetch_xml_files_parallel, validate_xml_completeness, run_ipfs_cmd, pin_cid, gc_repo, 
+                   fetch_xml_files_parallel, validate_xml_completeness, run_ipfs_cmd,
                    create_directory_via_mfs, DEBUG)
 
 def parse_files_xml(xml_content: bytes) -> List[Dict[str, Any]]:
     files_dict = xml_to_dict(xml_content)
     files_data = []
-    
+
     if 'files' in files_dict and 'file' in files_dict['files']:
         file_entries = files_dict['files']['file']
         if not isinstance(file_entries, list):
             file_entries = [file_entries]
-        
+
         for file_entry in file_entries:
             if isinstance(file_entry, dict) and '@attributes' in file_entry:
                 file_info = {
                     'name': file_entry['@attributes'].get('name', ''),
                     'source': file_entry['@attributes'].get('source', ''),
                 }
-                
+
                 for field in ['mtime', 'size', 'md5', 'crc32', 'sha1', 'format']:
                     if field in file_entry:
                         file_info[field] = file_entry[field]
-                
+
                 files_data.append(file_info)
-    
+
     return files_data
+
+def extract_subdirectories(files_data: List[Dict[str, Any]]) -> set:
+    """
+    Extract unique first-level subdirectory names from files.xml data.
+
+    Args:
+        files_data: List of file info dicts from files.xml
+
+    Returns:
+        Set of first-level subdirectory names
+
+    Example:
+        files_data with entries ["file.txt", "derivatives/thumb.jpg", "derivatives/small.jpg"]
+        Returns: {"derivatives"}
+    """
+    subdirs = set()
+    for file_info in files_data:
+        filename = file_info.get('name', '')
+        if '/' in filename:
+            # Extract first-level subdirectory name (text before first '/')
+            subdir = filename.split('/')[0]
+            subdirs.add(subdir)
+    return subdirs
 
 def create_synthetic_directory(cid: str, identifier: str, files_data: List[Dict[str, Any]], available_files: Dict[str, str]) -> str:
     """
     Create a synthetic UnixFS directory node containing all files from files.xml
-    
+
+    Optimization: Reuse existing subdirectory CIDs instead of copying individual files
+    when subdirectories are referenced in files.xml.
+
     Returns:
         CID of the created directory, or None if failed
     """
     print(f"      Creating synthetic directory for {identifier}", file=sys.stderr)
-    
-    # Build the DAG-JSON structure for the directory
-    links = []
-    
+
+    # Extract subdirectories from files.xml
+    subdirs = extract_subdirectories(files_data)
+
+    # Get top-level directory CIDs if we have subdirectories
+    root_entries = {}
+    if subdirs:
+        print(f"      Found {len(subdirs)} subdirectories, fetching directory CIDs...", file=sys.stderr)
+        result = run_ipfs_cmd(['ls', '--resolve-type=false', '--size=false', cid], capture_output=True, text=True)
+        if result.returncode == 0:
+            for line in result.stdout.strip().split('\n'):
+                if not line:
+                    continue
+                parts = line.split(maxsplit=1)
+                if len(parts) == 2:
+                    entry_cid = parts[0]
+                    entry_name = parts[1]
+                    root_entries[entry_name] = entry_cid
+        else:
+            print(f"        ⚠ Failed to get root entries, will use individual files", file=sys.stderr)
+
+    # Track which files/dirs we've added
+    files_dict = {}
+    files_handled_by_subdirs = set()
+
+    # First, handle subdirectories
+    for subdir in subdirs:
+        if subdir in root_entries:
+            # Use the directory CID directly
+            dir_cid = root_entries[subdir]
+            files_dict[subdir] = dir_cid
+            print(f"        ✓ {subdir}/ -> {dir_cid} (directory reuse)", file=sys.stderr)
+
+            # Mark all files in this subdir as handled
+            for file_info in files_data:
+                file_name = file_info.get('name', '')
+                if file_name.startswith(subdir + '/'):
+                    files_handled_by_subdirs.add(file_name)
+        else:
+            # Subdirectory not found at root, will fall back to individual files
+            print(f"        ⚠ {subdir}/ not found at root, using individual files", file=sys.stderr)
+
+    # Now handle remaining files (root-level files and files in subdirs that weren't reused)
     for file_info in files_data:
         file_name = file_info.get('name', '')
         if not file_name:
             continue
-            
+
+        # Skip if already handled by a subdirectory
+        if file_name in files_handled_by_subdirs:
+            continue
+
         if file_name not in available_files:
             print(f"        ✗ {file_name} (not found in root CID, skipping)")
             error_msg = f"{cid}\t{identifier}\tDATA_ERROR\tFile not found in root CID: {file_name}"
             log_errors([error_msg])
             continue
-        
-        # Use the actual individual file CID from ipfs ls output
+
+        # Use the actual individual file CID from available_files
         file_cid = available_files[file_name]
-        
-        links.append({
-            "Name": file_name,
-            "Hash": {"/": file_cid}
-        })
+        files_dict[file_name] = file_cid
         print(f"        ✓ {file_name} -> {file_cid}", file=sys.stderr)
-    
-    if not links:
-        print(f"        No valid files found for {identifier}", file=sys.stderr)
+
+    if not files_dict:
+        print(f"        No valid files or directories found for {identifier}", file=sys.stderr)
         return None
-    
-    print(f"      Creating directory with {len(links)} files...", file=sys.stderr)
-    
+
+    print(f"      Creating directory with {len(files_dict)} entries...", file=sys.stderr)
+
     try:
-        # Convert links to files_dict for MFS
-        files_dict = {}
-        for link in links:
-            files_dict[link["Name"]] = link["Hash"]["/"]
-        
         # Use MFS to create directory - automatically handles dag-pb and HAMT sharding
         dir_cid = create_directory_via_mfs(files_dict, f"item_{identifier}")
         print(f"      ✓ Created synthetic directory: {dir_cid}", file=sys.stderr)
-        
-        # Pin the synthetic directory to prevent GC
-        # Temporarily disabled - pinning can hang when fetching remote blocks
-        # pin_cid(dir_cid)
+
+        # Note: Pinning is disabled because it recursively fetches all file blocks,
+        # which can hang on network issues. Since GC is disabled, directories are
+        # retained in the blockstore anyway.
         return dir_cid
-            
+
     except Exception as e:
         print(f"      ✗ Error creating directory: {e}")
         error_msg = f"{cid}\t{identifier}\tIPFS_ERROR\tError creating synthetic directory: {str(e)}"
@@ -270,21 +330,13 @@ def run_files(cids: List[str]):
             container_files[identifier] = synthetic_cid
             child_cids.append(synthetic_cid)
         
-        from shared import create_directory_via_mfs, generate_shallow_car_file, pin_cid
+        from shared import create_directory_via_mfs, generate_shallow_car_file
         container_cid = create_directory_via_mfs(container_files, "extract_items_container")
         
         if container_cid:
             print(f"\n📁 Container directory (MFS root): {container_cid}", file=sys.stderr)
             print(container_cid)  # Also print to stdout for easy access
             
-            # Pin the container directory
-            # Temporarily disabled - pinning can hang when fetching remote blocks
-            # pin_cid(container_cid)
-            
             # Generate shallow CAR file with just the directory structure
             car_filename = f"extract_items_{container_cid}.car"
             generate_shallow_car_file(container_cid, child_cids, car_filename)
-        
-        # Clean up temporary blocks after pinning what we want to keep
-        # Temporarily disabled for rapid iteration - keeping blocks in blockstore
-        # gc_repo()
