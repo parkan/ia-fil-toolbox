@@ -546,13 +546,81 @@ class TestIAFilToolbox(unittest.TestCase):
             for excluded in excluded_files:
                 self.assertNotIn(excluded, actual_files,
                                f"Conflicted file {excluded} should have been excluded but was found in merge")
-            
+
             # Test file access in merged directory
             test_result, test_error = run_cmd(["ipfs", "cat", f"{merged_cid}/shared_file.txt"])
             self.assertIsNotNone(test_result, f"Could not access file in merged directory: {test_error}")
-            
+
         finally:
             # tearDown() will handle cleanup
+            pass
+
+    def test_collect_command(self):
+        """Test the collect command wraps CIDs in a parent directory without reading subgraphs"""
+        from shared import ensure_staging_ipfs
+        ensure_staging_ipfs()
+
+        # add test fixtures to get a CID
+        result1, error1 = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "add", "-r", "--cid-version=1", "test_fixtures"])
+        self.assertIsNotNone(result1, f"Failed to add test_fixtures: {error1}")
+
+        # create a second directory
+        test_dir2 = Path("test_fixtures2")
+        test_dir2.mkdir(exist_ok=True)
+        (test_dir2 / "file.txt").write_text("test content")
+
+        try:
+            result2, error2 = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "add", "-r", "--cid-version=1", str(test_dir2)])
+            self.assertIsNotNone(result2, f"Failed to add test_fixtures2: {error2}")
+
+            # extract root CIDs
+            root_cid1 = None
+            for line in result1.split('\n'):
+                if line.strip().endswith('test_fixtures'):
+                    root_cid1 = line.split()[1]
+                    break
+
+            root_cid2 = None
+            for line in result2.split('\n'):
+                if line.strip().endswith('test_fixtures2'):
+                    root_cid2 = line.split()[1]
+                    break
+
+            self.assertIsNotNone(root_cid1, "Could not find root CID for test_fixtures")
+            self.assertIsNotNone(root_cid2, "Could not find root CID for test_fixtures2")
+
+            # run collect command (--no-someguy for test environment)
+            collect_result, collect_error = run_cmd(["python3", "ia_fil.py", "--no-someguy", "collect", root_cid1, root_cid2])
+            self.assertIsNotNone(collect_result, f"collect command failed: {collect_error}")
+
+            collection_cid = collect_result.strip()
+            self.assertTrue(collection_cid.startswith(('Qm', 'bafy')), f"Invalid CID format: {collection_cid}")
+
+            # verify the collection directory has entries named after the input CIDs
+            ls_result, ls_error = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "ls", "--size=false", "--resolve-type=false", collection_cid])
+            self.assertIsNotNone(ls_result, f"Failed to list collection {collection_cid}: {ls_error}")
+
+            entries = {}
+            for line in ls_result.split('\n'):
+                if line.strip():
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        entry_cid = parts[0]
+                        entry_name = parts[1]
+                        entries[entry_name] = entry_cid
+
+            # entries should be named after input CIDs and point to them
+            self.assertIn(root_cid1, entries, f"Collection should have entry named {root_cid1}")
+            self.assertIn(root_cid2, entries, f"Collection should have entry named {root_cid2}")
+            self.assertEqual(entries[root_cid1], root_cid1, "Entry should point to same CID as its name")
+            self.assertEqual(entries[root_cid2], root_cid2, "Entry should point to same CID as its name")
+
+            # verify we can traverse into the collected directories
+            sub_ls, sub_error = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "ls", "--size=false", "--resolve-type=false", f"{collection_cid}/{root_cid1}"])
+            self.assertIsNotNone(sub_ls, f"Failed to list subdirectory: {sub_error}")
+            self.assertIn("item1_data.txt", sub_ls, "Should be able to see files in collected directory")
+
+        finally:
             pass
 
 if __name__ == "__main__":

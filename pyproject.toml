@@ -18,5 +18,5 @@ build-backend = "setuptools.build_meta"
 ia-fil = "ia_fil:cli"
 
 [tool.setuptools]
-py-modules = ["ia_fil", "metadata_cmd", "files_cmd", "merge_roots_cmd", "shared", "daemon_cmd"]
+py-modules = ["ia_fil", "metadata_cmd", "files_cmd", "merge_roots_cmd", "collect_cmd", "shared", "daemon_cmd"]
 
