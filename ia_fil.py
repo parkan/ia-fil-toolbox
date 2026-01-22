@@ -102,6 +102,28 @@ def merge_roots(ctx, cids, file, force_check_directories):
     run_merge_roots(cid_list, force_check_directories=force_check_directories)
 
 @cli.command()
+@click.argument('cids', nargs=-1)
+@click.option('-f', '--file', type=click.Path(exists=True), help='File containing CIDs (plain text or CSV with "cid" column)')
+@click.pass_context
+def collect(ctx, cids, file):
+    """Collect CIDs into a parent directory (shallow, no subgraph reads)"""
+    from collect_cmd import run_collect
+
+    cid_list = []
+    if file:
+        cid_list = read_cids_from_file(file)
+    elif cids:
+        cid_list = list(cids)
+    else:
+        click.echo("Error: Must provide either CIDs as arguments or use --file option", err=True)
+        raise click.Abort()
+
+    # start daemon now that we know arguments are valid
+    ensure_staging_ipfs(someguy=ctx.obj['someguy'])
+
+    run_collect(cid_list)
+
+@cli.command()
 @click.pass_context
 def run_daemons(ctx):
     """Run persistent IPFS and someguy daemons"""

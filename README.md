@@ -29,11 +29,14 @@ ia-fil extract-items <cid> [<cid> ...]
 # Fetch metadata files
 ia-fil metadata <cid> [<cid> ...]
 
-# Merge multiple root CIDs into a single directory
+# Merge multiple root CIDs into a single directory (flattens contents)
 ia-fil merge-roots <cid1> <cid2> [<cid3> ...]
 
 # Force expensive directory checks (default: uses file extension heuristics)
 ia-fil merge-roots --force-check-directories <cid1> <cid2>
+
+# Collect CIDs into parent directory (shallow, preserves structure)
+ia-fil collect <cid1> <cid2> [<cid3> ...]
 
 # Use with file input (plain text or CSV with "cid" column)
 ia-fil extract-items -f cids.txt
@@ -74,6 +77,11 @@ ia-fil daemon-status
   - Prints merged root CID to stdout
   - Generates `merged_root_<cid>.car` file
   - Files with conflicting names (same name, different CID) are excluded from the merge
+
+- **collect**: Wraps CIDs into a parent directory without reading subgraphs
+  - Prints collection CID to stdout
+  - Each input CID becomes a subdirectory entry (named by its CID)
+  - Shallow operation: only fetches root block of each input, no recursive traversal
 
 - **metadata**: Saves metadata to SQLite database (default: `metadata.db`)
 

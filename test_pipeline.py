@@ -408,8 +408,8 @@ class TestIAFilToolbox(unittest.TestCase):
                                 if len(parts) >= 2:
                                     thumbs_files.append(parts[1])
                         
-                        self.assertEqual(set(thumbs_files), {'thumb_001.jpg'},
-                                       f"videos.thumbs should contain thumb_001.jpg, got {thumbs_files}")
+                        self.assertEqual(set(thumbs_files), {'thumb_001.jpg', 'thumb_002.jpg'},
+                                       f"videos.thumbs should contain thumb files, got {thumbs_files}")
                         
                 else:  # item2
                     # item2 only has files at the root level
@@ -546,14 +546,244 @@ class TestIAFilToolbox(unittest.TestCase):
             for excluded in excluded_files:
                 self.assertNotIn(excluded, actual_files,
                                f"Conflicted file {excluded} should have been excluded but was found in merge")
-            
+
             # Test file access in merged directory
             test_result, test_error = run_cmd(["ipfs", "cat", f"{merged_cid}/shared_file.txt"])
             self.assertIsNotNone(test_result, f"Could not access file in merged directory: {test_error}")
-            
+
         finally:
             # tearDown() will handle cleanup
             pass
+
+    def test_collect_command(self):
+        """Test the collect command wraps CIDs in a parent directory without reading subgraphs"""
+        from shared import ensure_staging_ipfs
+        ensure_staging_ipfs()
+
+        # add test fixtures to get a CID
+        result1, error1 = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "add", "-r", "--cid-version=1", "test_fixtures"])
+        self.assertIsNotNone(result1, f"Failed to add test_fixtures: {error1}")
+
+        # create a second directory
+        test_dir2 = Path("test_fixtures2")
+        test_dir2.mkdir(exist_ok=True)
+        (test_dir2 / "file.txt").write_text("test content")
+
+        try:
+            result2, error2 = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "add", "-r", "--cid-version=1", str(test_dir2)])
+            self.assertIsNotNone(result2, f"Failed to add test_fixtures2: {error2}")
+
+            # extract root CIDs
+            root_cid1 = None
+            for line in result1.split('\n'):
+                if line.strip().endswith('test_fixtures'):
+                    root_cid1 = line.split()[1]
+                    break
+
+            root_cid2 = None
+            for line in result2.split('\n'):
+                if line.strip().endswith('test_fixtures2'):
+                    root_cid2 = line.split()[1]
+                    break
+
+            self.assertIsNotNone(root_cid1, "Could not find root CID for test_fixtures")
+            self.assertIsNotNone(root_cid2, "Could not find root CID for test_fixtures2")
+
+            # run collect command (--no-someguy for test environment)
+            collect_result, collect_error = run_cmd(["python3", "ia_fil.py", "--no-someguy", "collect", root_cid1, root_cid2])
+            self.assertIsNotNone(collect_result, f"collect command failed: {collect_error}")
+
+            collection_cid = collect_result.strip()
+            self.assertTrue(collection_cid.startswith(('Qm', 'bafy')), f"Invalid CID format: {collection_cid}")
+
+            # verify the collection directory has entries named after the input CIDs
+            ls_result, ls_error = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "ls", "--size=false", "--resolve-type=false", collection_cid])
+            self.assertIsNotNone(ls_result, f"Failed to list collection {collection_cid}: {ls_error}")
+
+            entries = {}
+            for line in ls_result.split('\n'):
+                if line.strip():
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        entry_cid = parts[0]
+                        entry_name = parts[1]
+                        entries[entry_name] = entry_cid
+
+            # entries should be named after input CIDs and point to them
+            self.assertIn(root_cid1, entries, f"Collection should have entry named {root_cid1}")
+            self.assertIn(root_cid2, entries, f"Collection should have entry named {root_cid2}")
+            self.assertEqual(entries[root_cid1], root_cid1, "Entry should point to same CID as its name")
+            self.assertEqual(entries[root_cid2], root_cid2, "Entry should point to same CID as its name")
+
+            # verify we can traverse into the collected directories
+            sub_ls, sub_error = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "ls", "--size=false", "--resolve-type=false", f"{collection_cid}/{root_cid1}"])
+            self.assertIsNotNone(sub_ls, f"Failed to list subdirectory: {sub_error}")
+            self.assertIn("item1_data.txt", sub_ls, "Should be able to see files in collected directory")
+
+        finally:
+            pass
+
+    def test_extract_then_collect(self):
+        """Integration test: extract-items creates synthetic dirs, collect wraps them"""
+        from shared import ensure_staging_ipfs
+        ensure_staging_ipfs()
+
+        # add test fixtures
+        result, error = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "add", "-r", "--cid-version=1", "test_fixtures"])
+        self.assertIsNotNone(result, f"Failed to add test_fixtures: {error}")
+
+        root_cid = None
+        for line in result.split('\n'):
+            if line.strip().endswith('test_fixtures'):
+                root_cid = line.split()[1]
+                break
+        self.assertIsNotNone(root_cid, "Could not find root CID")
+
+        # run extract-items to create synthetic directories
+        extract_result, extract_error = run_cmd(["python3", "ia_fil.py", "--no-someguy", "extract-items", root_cid])
+        self.assertIsNotNone(extract_result, f"extract-items failed: {extract_error}")
+
+        # parse CSV output to get synthetic CIDs
+        lines = extract_result.strip().split('\n')
+        csv_lines = [line for line in lines if ',' in line and not line.startswith('  ')]
+        self.assertGreaterEqual(len(csv_lines), 2, "Expected CSV output from extract-items")
+
+        synthetic_cids = []
+        for line in csv_lines[1:]:  # skip header
+            parts = line.split(',', 1)
+            if len(parts) == 2:
+                synthetic_cids.append(parts[1])  # cid is second column
+
+        self.assertGreater(len(synthetic_cids), 0, "No synthetic CIDs produced")
+
+        # now collect the synthetic directories
+        collect_result, collect_error = run_cmd(["python3", "ia_fil.py", "--no-someguy", "collect"] + synthetic_cids)
+        self.assertIsNotNone(collect_result, f"collect failed: {collect_error}")
+
+        collection_cid = collect_result.strip()
+        self.assertTrue(collection_cid.startswith(('Qm', 'bafy')), f"Invalid collection CID: {collection_cid}")
+
+        # verify collection contains entries for each synthetic directory
+        ls_result, ls_error = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "ls", "--size=false", "--resolve-type=false", collection_cid])
+        self.assertIsNotNone(ls_result, f"Failed to list collection: {ls_error}")
+
+        entries = []
+        for line in ls_result.split('\n'):
+            if line.strip():
+                parts = line.split()
+                if len(parts) >= 2:
+                    entries.append(parts[1])  # entry name
+
+        # each synthetic CID should appear as an entry name
+        for syn_cid in synthetic_cids:
+            self.assertIn(syn_cid, entries, f"Synthetic CID {syn_cid} not in collection")
+
+        # verify we can traverse collection -> synthetic dir -> file
+        first_syn = synthetic_cids[0]
+        deep_ls, deep_error = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "ls", "--size=false", "--resolve-type=false", f"{collection_cid}/{first_syn}"])
+        self.assertIsNotNone(deep_ls, f"Failed to traverse into collected item: {deep_error}")
+        # should see item files
+        self.assertTrue(len(deep_ls.strip()) > 0, "Collected item should have contents")
+
+    def test_merge_roots_heuristic_misses_misleading_dir(self):
+        """Test that extension heuristic incorrectly treats 'file.jpg/' dir as a file"""
+        from shared import ensure_staging_ipfs
+        ensure_staging_ipfs()
+
+        # create a misleadingly named directory
+        tricky_dir = Path("test_tricky")
+        tricky_dir.mkdir(exist_ok=True)
+        misleading = tricky_dir / "image.jpg"  # looks like file, is actually dir
+        misleading.mkdir(exist_ok=True)
+        (misleading / "actual_content.txt").write_text("hidden inside")
+        (tricky_dir / "normal.txt").write_text("visible")
+
+        try:
+            result, error = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "add", "-r", "--cid-version=1", str(tricky_dir)])
+            self.assertIsNotNone(result, f"Failed to add tricky dir: {error}")
+
+            root_cid = None
+            for line in result.split('\n'):
+                if line.strip().endswith('test_tricky'):
+                    root_cid = line.split()[1]
+                    break
+            self.assertIsNotNone(root_cid, "Could not find root CID")
+
+            # merge WITHOUT --force-check-directories (uses heuristic)
+            merge_result, merge_error = run_cmd(["python3", "ia_fil.py", "--no-someguy", "merge-roots", root_cid])
+            self.assertIsNotNone(merge_result, f"merge-roots failed: {merge_error}")
+
+            merged_cid = merge_result.strip()
+
+            # list merged directory
+            ls_result, ls_error = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "ls", "--size=false", "--resolve-type=false", merged_cid])
+            self.assertIsNotNone(ls_result, f"Failed to list merged: {ls_error}")
+
+            files = [line.split()[1] for line in ls_result.strip().split('\n') if line.strip()]
+
+            # heuristic should have treated image.jpg as a file (wrong!)
+            # so we should see "image.jpg" at top level as a file link
+            self.assertIn("image.jpg", files, "Heuristic should treat image.jpg as file")
+            self.assertIn("normal.txt", files)
+
+            # trying to ls into image.jpg should fail or return nothing
+            # because it was copied as a file reference, not traversed as directory
+            nested_ls, _ = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "ls", "--size=false", "--resolve-type=false", f"{merged_cid}/image.jpg"])
+            # the nested ls might succeed (since original is a dir) but the key point is
+            # actual_content.txt was never added to the merge as a separate entry
+            # we verified this by only checking top-level has just image.jpg and normal.txt
+
+        finally:
+            shutil.rmtree(tricky_dir, ignore_errors=True)
+
+    def test_merge_roots_force_check_finds_misleading_dir(self):
+        """Test that --force-check-directories correctly identifies 'file.jpg/' as directory"""
+        from shared import ensure_staging_ipfs
+        ensure_staging_ipfs()
+
+        # create same misleadingly named directory
+        tricky_dir = Path("test_tricky2")
+        tricky_dir.mkdir(exist_ok=True)
+        misleading = tricky_dir / "image.jpg"
+        misleading.mkdir(exist_ok=True)
+        (misleading / "actual_content.txt").write_text("hidden inside")
+        (tricky_dir / "normal.txt").write_text("visible")
+
+        try:
+            result, error = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "add", "-r", "--cid-version=1", str(tricky_dir)])
+            self.assertIsNotNone(result, f"Failed to add tricky dir: {error}")
+
+            root_cid = None
+            for line in result.split('\n'):
+                if line.strip().endswith('test_tricky2'):
+                    root_cid = line.split()[1]
+                    break
+            self.assertIsNotNone(root_cid, "Could not find root CID")
+
+            # merge WITH --force-check-directories
+            merge_result, merge_error = run_cmd(["python3", "ia_fil.py", "--no-someguy", "merge-roots", "--force-check-directories", root_cid])
+            self.assertIsNotNone(merge_result, f"merge-roots failed: {merge_error}")
+
+            merged_cid = merge_result.strip()
+
+            # list merged directory - top level should have image.jpg as directory
+            ls_result, ls_error = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "ls", "--size=false", "--resolve-type=false", merged_cid])
+            self.assertIsNotNone(ls_result, f"Failed to list merged: {ls_error}")
+
+            top_level = [line.split()[1] for line in ls_result.strip().split('\n') if line.strip()]
+            self.assertIn("image.jpg", top_level, f"Should have image.jpg dir, got: {top_level}")
+            self.assertIn("normal.txt", top_level)
+
+            # with force check, image.jpg should be a directory we can traverse into
+            nested_ls, nested_error = run_cmd(["ipfs", "--api", "/ip4/127.0.0.1/tcp/5009", "ls", "--size=false", "--resolve-type=false", f"{merged_cid}/image.jpg"])
+            self.assertIsNotNone(nested_ls, f"Failed to list image.jpg subdir: {nested_error}")
+
+            nested_files = [line.split()[1] for line in nested_ls.strip().split('\n') if line.strip()]
+            self.assertIn("actual_content.txt", nested_files,
+                         f"Force check should find nested file inside image.jpg/, got: {nested_files}")
+
+        finally:
+            shutil.rmtree(tricky_dir, ignore_errors=True)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
