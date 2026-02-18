@@ -2,10 +2,30 @@
 """Interactive ia-fil shell using the cmd module."""
 
 import cmd
+import os
+import re
 import shlex
+import subprocess
 import sys
 
 from ia_fil import cli
+
+WORKDIR = os.environ.get("WORKDIR", "/work")
+os.chdir(WORKDIR)
+
+
+def _parse_storacha_subcommands():
+    """Parse storacha --help to discover available subcommands."""
+    try:
+        result = subprocess.run(
+            ["storacha", "--help"], capture_output=True, text=True, timeout=5
+        )
+        cmds = []
+        for m in re.finditer(r"^\s{4}(\S+(?:\s\S+)?)\s{2,}", result.stdout, re.MULTILINE):
+            cmds.append(m.group(1).strip())
+        return cmds
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
 
 
 class IAShell(cmd.Cmd):
@@ -52,17 +72,32 @@ class IAShell(cmd.Cmd):
     do_exit = do_quit
     do_EOF = do_quit
 
+    # ── Storacha passthrough ────────────────────────────────────────────
+    _storacha_cmds = None
+
+    @classmethod
+    def _get_storacha_cmds(cls):
+        if cls._storacha_cmds is None:
+            cls._storacha_cmds = _parse_storacha_subcommands()
+        return cls._storacha_cmds
+
+    def do_storacha(self, line):
+        """Storacha CLI (w3 storage). Run 'storacha help' for subcommands."""
+        subprocess.run(["storacha"] + shlex.split(line))
+
+    def complete_storacha(self, text, line, begidx, endidx):
+        return [c for c in self._get_storacha_cmds() if c.startswith(text)]
+
     # ── Completions ─────────────────────────────────────────────────────
+    _ia_commands = [
+        "extract-items", "metadata", "merge-roots", "collect",
+        "daemon-status", "storacha", "help", "quit", "exit",
+    ]
+
     def completenames(self, text, *ignored):
-        # Use hyphens in display, map to underscores internally
-        commands = [
-            "extract-items", "metadata", "merge-roots", "collect",
-            "daemon-status", "help", "quit", "exit",
-        ]
-        return [c for c in commands if c.startswith(text)]
+        return [c for c in self._ia_commands if c.startswith(text)]
 
     def default(self, line):
-        # Allow hyphenated names by mapping to underscore methods
         argv = shlex.split(line)
         method = "do_" + argv[0].replace("-", "_")
         if hasattr(self, method):
