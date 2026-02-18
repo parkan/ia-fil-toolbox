@@ -12,10 +12,13 @@ from typing import List, Optional, Dict, Any, Tuple, Set
 from lxml import etree
 
 # MFS configuration constants
-MFS_FLUSH_LIMIT = 1024
+MFS_FLUSH_LIMIT = 500000
 
 # Debug configuration
 DEBUG = os.environ.get('DEBUG', '').lower() in ('1', 'true', 'yes', 'on')
+
+# Timeout for IPFS fetch operations (listing, cp, etc.)
+FETCH_TIMEOUT = float(os.environ.get('FETCH_TIMEOUT', '30'))
 
 
 def read_cids_from_file(file_path: str) -> List[str]:
@@ -123,13 +126,13 @@ def list_files_with_cids(cid: str, known_files: Optional[Set[str]] = None, force
                 ['ls', '--resolve-type=false', '--size=false', dir_cid],
                 capture_output=True,
                 text=True,
-                timeout=30  # Add timeout to prevent hanging
+                timeout=FETCH_TIMEOUT
             )
             if result.returncode != 0:
                 print(f"  Failed to list {dir_cid}: {result.stderr}", file=sys.stderr)
                 return {}
         except subprocess.TimeoutExpired:
-            print(f"  Timeout listing {dir_cid} after 30 seconds", file=sys.stderr)
+            print(f"  Timeout listing {dir_cid} after {FETCH_TIMEOUT}s", file=sys.stderr)
             return {}
         
         files = {}
@@ -737,33 +740,30 @@ def create_directory_via_mfs(files_dict: Dict[str, str], name_prefix: str = "dir
         # Copy each file to MFS with --flush=false for performance
         # MFS automatically handles HAMT sharding and uses dag-pb
         # Use --parents to automatically create intermediate directories
-        # Flush periodically to avoid hitting the unflushed operations limit
-        operation_count = 0
         total_files = len(files_dict)
+        failed = []
+        cp_timeout = FETCH_TIMEOUT
         for i, (filename, file_cid) in enumerate(files_dict.items(), 1):
             if DEBUG:
                 print(f"    DEBUG: Adding file {i}/{total_files}: {filename} ({file_cid})", file=sys.stderr)
-            
-            result = run_ipfs_cmd([
-                'files', 'cp', '--flush=false', '--parents', f'/ipfs/{file_cid}', f'{mfs_path}/{filename}'
-            ], capture_output=True, text=True)
-            
+            elif i % 1000 == 0:
+                print(f"    {i}/{total_files} files added...", file=sys.stderr)
+
+            try:
+                result = run_ipfs_cmd([
+                    'files', 'cp', '--flush=false', '--parents', f'/ipfs/{file_cid}', f'{mfs_path}/{filename}'
+                ], capture_output=True, text=True, timeout=cp_timeout)
+            except subprocess.TimeoutExpired:
+                failed.append((filename, file_cid, "timeout"))
+                continue
+
             if result.returncode != 0:
-                print(f"    ⚠️ Warning: Failed to add {filename}: {result.stderr}", file=sys.stderr)
-            else:
-                operation_count += 1
-                
-                # Flush every (MFS_FLUSH_LIMIT - 1) operations to stay under the limit
-                if operation_count >= (MFS_FLUSH_LIMIT - 1):
-                    print(f"    Flushing after {operation_count} operations...", file=sys.stderr)
-                    flush_result = run_ipfs_cmd([
-                        'files', 'flush', mfs_path
-                    ], capture_output=True, text=True)
-                    
-                    if flush_result.returncode != 0:
-                        print(f"    ⚠️ Warning: Failed to flush MFS directory: {flush_result.stderr}", file=sys.stderr)
-                    
-                    operation_count = 0
+                failed.append((filename, file_cid, result.stderr.strip()))
+
+        if failed:
+            print(f"    {len(failed)}/{total_files} files failed:", file=sys.stderr)
+            for filename, cid, reason in failed:
+                print(f"      {cid} {filename}: {reason}", file=sys.stderr)
         
         # Manually flush the directory to ensure consistency and get final CID
         result = run_ipfs_cmd([

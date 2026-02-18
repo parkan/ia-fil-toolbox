@@ -98,6 +98,48 @@ ia-fil --no-someguy extract-items <cid>
 uv run ia_fil.py extract-items <cid>
 ```
 
+## Container (Podman)
+
+The included Containerfile bundles the full stack: IPFS (Kubo), go-car, someguy, storacha CLI, and the Python toolbox.
+
+### Build
+
+```bash
+podman build -t ia-fil-toolbox .
+```
+
+### Interactive shell
+
+Starts IPFS and someguy daemons, then drops into a tab-completing `ia>` prompt:
+
+```bash
+podman run -it \
+  -v ./work:/work:Z \
+  -v ./config:/config:Z \
+  ia-fil-toolbox
+```
+
+- `/work` — working directory for CID lists, CAR files, metadata DBs, error logs
+- `/config` — persistent IPFS repo and storacha secrets (survives container restarts)
+
+### One-shot commands
+
+Pass arguments directly to skip the shell:
+
+```bash
+podman run --rm \
+  -v ./work:/work:Z \
+  -v ./config:/config:Z \
+  ia-fil-toolbox extract-items -f /work/cids.txt
+```
+
+### Environment variables
+
+These work in addition to the ones listed above:
+
+- **`FETCH_TIMEOUT=30`** — timeout in seconds for IPFS fetch operations (supports decimals, e.g. `0.1`)
+- **`WORKDIR=/work`** — working directory inside the container
+
 ## Development
 
 ### Running Tests
