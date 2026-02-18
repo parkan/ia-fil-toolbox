@@ -1,6 +1,14 @@
 .ipfs_staging/
 *.csv
 
+# Claude Code
+CLAUDE.md
+.claude/
+
+# Container runtime dirs
+work/
+config/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
