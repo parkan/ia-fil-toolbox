@@ -16,8 +16,8 @@ _someguy_log_files = None
 
 def initialize_repo():
     """Initialize IPFS repo if it doesn't exist"""
-    repo_dir = ".ipfs_staging"
-    
+    repo_dir = os.environ.get('IPFS_PATH', '.ipfs_staging')
+
     if not Path(repo_dir).exists() or not Path(repo_dir, "config").exists():
         print("Initializing IPFS repo...", file=sys.stderr)
         # Remove any partial/corrupted repo directory
@@ -40,7 +40,7 @@ def initialize_repo():
 
 def configure_ipfs():
     """Configure IPFS for staging use"""
-    repo_dir = ".ipfs_staging"
+    repo_dir = os.environ.get('IPFS_PATH', '.ipfs_staging')
     env = os.environ.copy()
     env['IPFS_PATH'] = repo_dir
     
@@ -98,8 +98,8 @@ def start_daemon():
     import tempfile
     import atexit
     import signal
-    
-    repo_dir = ".ipfs_staging"
+
+    repo_dir = os.environ.get('IPFS_PATH', '.ipfs_staging')
     env = os.environ.copy()
     env['IPFS_PATH'] = repo_dir
     
@@ -316,20 +316,22 @@ def start_someguy():
     atexit.register(cleanup_someguy_logs)
     
     # Generate throwaway peer IDs for endpoints (following run-someguy.sh pattern)
-    endpoints = ['https://ia.dcentnetworks.nl']
+    endpoints_str = os.environ.get('SOMEGUY_ENDPOINTS', 'https://ia.dcentnetworks.nl')
+    endpoints = [e.strip() for e in endpoints_str.split(',') if e.strip()]
     peer_ids = []
     
     # Ensure keystore directory exists
-    keystore_dir = ".ipfs_staging/keystore"
+    ipfs_path = os.environ.get('IPFS_PATH', '.ipfs_staging')
+    keystore_dir = f"{ipfs_path}/keystore"
     os.makedirs(keystore_dir, exist_ok=True)
-    
+
     for i, endpoint in enumerate(endpoints):
         # Generate temporary key to get peer ID
         key_name = f"tmp-throwaway-{os.getpid()}_{i}"
         try:
             # Use IPFS_PATH instead of --api for key generation to avoid keystore access issues
             env = os.environ.copy()
-            env['IPFS_PATH'] = '.ipfs_staging'
+            env['IPFS_PATH'] = ipfs_path
             result = subprocess.run(
                 ['ipfs', 'key', 'gen', '-t', 'ed25519', key_name],
                 capture_output=True, text=True, env=env
@@ -433,82 +435,72 @@ def ensure_someguy_running():
         # Start someguy
         return start_someguy() is not None
 
-def run_persistent_daemons(someguy=True):
-    """Run persistent IPFS and optionally someguy daemons until interrupted"""
+def run_persistent_daemons():
+    """Run persistent IPFS and someguy daemons until interrupted"""
     import signal
     import sys
     import os
-    
+
     # Initialize and start IPFS
     if not initialize_repo():
         print("Failed to initialize IPFS repository", file=sys.stderr)
         sys.exit(1)
-    
+
     configure_ipfs()
-    
+
     ipfs_pid = start_daemon()
     if not ipfs_pid:
         print("Failed to start IPFS daemon", file=sys.stderr)
         sys.exit(1)
-    
+
     print(f"IPFS daemon started (PID: {ipfs_pid})")
-    
-    # Start someguy if requested
-    someguy_pid = None
+
+    # Start someguy
+    someguy_pid = start_someguy()
     someguy_external = False
-    if someguy:
-        someguy_pid = start_someguy()
-        if someguy_pid == -1:
-            # Already running externally
-            someguy_external = True
-            print("Using external someguy daemon")
-        elif someguy_pid:
-            print(f"someguy daemon started (PID: {someguy_pid})")
-        else:
-            print("Error: Failed to start someguy daemon", file=sys.stderr)
-            print("Use --no-someguy to disable if someguy is not needed.", file=sys.stderr)
-            # Stop IPFS before exiting
-            stop_daemon()
-            sys.exit(1)
-    
+    if someguy_pid == -1:
+        someguy_external = True
+        print("Using external someguy daemon")
+    elif someguy_pid:
+        print(f"someguy daemon started (PID: {someguy_pid})")
+    else:
+        print("Error: Failed to start someguy daemon", file=sys.stderr)
+        stop_daemon()
+        sys.exit(1)
+
     # Set up signal handlers for clean shutdown
     def signal_handler(signum, frame):
         print("\nShutting down daemons...", file=sys.stderr)
-        
-        # Stop someguy first (only if we started it)
+
         if someguy_pid and someguy_pid != -1:
             stop_someguy()
         elif someguy_external:
             print("Note: External someguy daemon left running", file=sys.stderr)
-        
-        # Stop IPFS
+
         stop_daemon()
-        
         sys.exit(0)
-    
+
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-    
+
     print("Daemons running. Press Ctrl+C to stop.")
-    
+
     # Monitor daemon health
     try:
         while True:
             time.sleep(5)
-            
-            # Check IPFS daemon
+
             if _daemon_process_obj and _daemon_process_obj.poll() is not None:
                 print("IPFS daemon died unexpectedly!", file=sys.stderr)
                 if _daemon_log_files:
                     print(f"Check logs: {_daemon_log_files[0]} {_daemon_log_files[1]}", file=sys.stderr)
                 sys.exit(1)
-            
-            # Check someguy daemon (only if we started it)
-            if someguy and not someguy_external and _someguy_process_obj and _someguy_process_obj.poll() is not None:
+
+            if not someguy_external and _someguy_process_obj and _someguy_process_obj.poll() is not None:
                 print("someguy daemon died unexpectedly!", file=sys.stderr)
                 if _someguy_log_files:
                     print(f"Check logs: {_someguy_log_files[0]} {_someguy_log_files[1]}", file=sys.stderr)
                 sys.exit(1)
-                
+
     except KeyboardInterrupt:
         signal_handler(signal.SIGINT, None)

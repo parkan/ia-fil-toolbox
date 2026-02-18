@@ -15,7 +15,7 @@ def run_cmd(cmd, **kwargs):
     """Run command and return result"""
     # Use IPFS_PATH for setup/teardown operations (no daemon needed)
     env = os.environ.copy()
-    env['IPFS_PATH'] = ".ipfs_staging"
+    env['IPFS_PATH'] = os.environ.get('IPFS_PATH', '.ipfs_staging')
     result = subprocess.run(cmd, capture_output=True, text=True, env=env, **kwargs)
     if result.returncode != 0:
         # Return both stdout and stderr for unittest to handle
@@ -589,8 +589,7 @@ class TestIAFilToolbox(unittest.TestCase):
             self.assertIsNotNone(root_cid1, "Could not find root CID for test_fixtures")
             self.assertIsNotNone(root_cid2, "Could not find root CID for test_fixtures2")
 
-            # run collect command (--no-someguy for test environment)
-            collect_result, collect_error = run_cmd(["python3", "ia_fil.py", "--no-someguy", "collect", root_cid1, root_cid2])
+            collect_result, collect_error = run_cmd(["python3", "ia_fil.py", "collect", root_cid1, root_cid2])
             self.assertIsNotNone(collect_result, f"collect command failed: {collect_error}")
 
             collection_cid = collect_result.strip()
@@ -640,7 +639,7 @@ class TestIAFilToolbox(unittest.TestCase):
         self.assertIsNotNone(root_cid, "Could not find root CID")
 
         # run extract-items to create synthetic directories
-        extract_result, extract_error = run_cmd(["python3", "ia_fil.py", "--no-someguy", "extract-items", root_cid])
+        extract_result, extract_error = run_cmd(["python3", "ia_fil.py","extract-items", root_cid])
         self.assertIsNotNone(extract_result, f"extract-items failed: {extract_error}")
 
         # parse CSV output to get synthetic CIDs
@@ -657,7 +656,7 @@ class TestIAFilToolbox(unittest.TestCase):
         self.assertGreater(len(synthetic_cids), 0, "No synthetic CIDs produced")
 
         # now collect the synthetic directories
-        collect_result, collect_error = run_cmd(["python3", "ia_fil.py", "--no-someguy", "collect"] + synthetic_cids)
+        collect_result, collect_error = run_cmd(["python3", "ia_fil.py","collect"] + synthetic_cids)
         self.assertIsNotNone(collect_result, f"collect failed: {collect_error}")
 
         collection_cid = collect_result.strip()
@@ -710,7 +709,7 @@ class TestIAFilToolbox(unittest.TestCase):
             self.assertIsNotNone(root_cid, "Could not find root CID")
 
             # merge WITHOUT --force-check-directories (uses heuristic)
-            merge_result, merge_error = run_cmd(["python3", "ia_fil.py", "--no-someguy", "merge-roots", root_cid])
+            merge_result, merge_error = run_cmd(["python3", "ia_fil.py","merge-roots", root_cid])
             self.assertIsNotNone(merge_result, f"merge-roots failed: {merge_error}")
 
             merged_cid = merge_result.strip()
@@ -761,7 +760,7 @@ class TestIAFilToolbox(unittest.TestCase):
             self.assertIsNotNone(root_cid, "Could not find root CID")
 
             # merge WITH --force-check-directories
-            merge_result, merge_error = run_cmd(["python3", "ia_fil.py", "--no-someguy", "merge-roots", "--force-check-directories", root_cid])
+            merge_result, merge_error = run_cmd(["python3", "ia_fil.py","merge-roots", "--force-check-directories", root_cid])
             self.assertIsNotNone(merge_result, f"merge-roots failed: {merge_error}")
 
             merged_cid = merge_result.strip()

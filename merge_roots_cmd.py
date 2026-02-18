@@ -1,6 +1,6 @@
 import sys
 from typing import List, Dict, Set
-from shared import list_files_with_cids, log_errors, run_ipfs_cmd, create_directory_via_mfs
+from shared import list_files_with_cids, log_errors, run_ipfs_cmd, create_directory_via_mfs, pin_to_storacha
 
 def merge_root_cids(cids: List[str], force_check_directories: bool = False) -> str:
     """
@@ -83,31 +83,35 @@ def merge_root_cids(cids: List[str], force_check_directories: bool = False) -> s
         log_errors([error_msg])
         return None
 
-def run_merge_roots(cids: List[str], force_check_directories: bool = False):
+def run_merge_roots(cids: List[str], force_check_directories: bool = False, pin: bool = False):
     """
     Main entry point for merge-roots command.
-    
+
     Args:
         cids: List of root CIDs to merge
         force_check_directories: If False (default), use file extension heuristics to skip expensive checks
+        pin: If True, upload generated CAR to storacha
     """
     if not cids:
         print("Error: No CIDs provided", file=sys.stderr)
         return
-    
+
     print(f"Starting merge-roots for {len(cids)} CIDs", file=sys.stderr)
-    
+
     merged_cid = merge_root_cids(cids, force_check_directories=force_check_directories)
-    
+
     if merged_cid:
         print(merged_cid)  # Output just the CID for easy scripting
-        
+
         # Generate shallow CAR file with just the directory structure
         from shared import generate_shallow_car_file
         car_filename = f"merge_roots_{merged_cid}.car"
-        
+
         # For merged roots, we don't have child CIDs to include, just the root
         generate_shallow_car_file(merged_cid, [], car_filename)
+
+        if pin:
+            pin_to_storacha(car_filename)
     else:
         print("Error: Failed to create merged directory", file=sys.stderr)
         sys.exit(1)

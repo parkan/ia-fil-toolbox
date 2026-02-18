@@ -10,8 +10,7 @@ import sys
 
 from ia_fil import cli
 
-WORKDIR = os.environ.get("WORKDIR", "/work")
-os.chdir(WORKDIR)
+os.chdir("/work")
 
 
 def _parse_storacha_subcommands():
@@ -36,10 +35,19 @@ class IAShell(cmd.Cmd):
     )
 
     # ── Subcommand dispatch ─────────────────────────────────────────────
+    _GROUP_FLAGS = {'--pin'}
+
     def _run(self, argv):
-        """Invoke a Click command with the given argv."""
+        """Invoke a Click command with the given argv.
+
+        Click requires group-level flags (--pin) before the subcommand
+        name. This method hoists them automatically so users can type
+        them in any position.
+        """
+        group_flags = [a for a in argv if a in self._GROUP_FLAGS]
+        cmd_args = [a for a in argv if a not in self._GROUP_FLAGS]
         try:
-            cli(argv, standalone_mode=False)
+            cli(group_flags + cmd_args, standalone_mode=False)
         except SystemExit:
             pass
         except Exception as e:

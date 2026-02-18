@@ -1,6 +1,6 @@
 import sys
 from typing import List, Dict
-from shared import run_ipfs_cmd, create_directory_via_mfs, generate_shallow_car_file
+from shared import run_ipfs_cmd, create_directory_via_mfs, generate_shallow_car_file, pin_to_storacha
 
 def collect_cids(cids: List[str], names: Dict[str, str] = None) -> str:
     """
@@ -42,13 +42,14 @@ def collect_cids(cids: List[str], names: Dict[str, str] = None) -> str:
         return None
 
 
-def run_collect(cids: List[str], names: Dict[str, str] = None):
+def run_collect(cids: List[str], names: Dict[str, str] = None, pin: bool = False):
     """
     Main entry point for collect command.
 
     Args:
         cids: List of CIDs to collect
         names: Optional dict mapping CID -> name for directory entries
+        pin: If True, upload generated CAR to storacha
     """
     if not cids:
         print("Error: No CIDs provided", file=sys.stderr)
@@ -65,6 +66,9 @@ def run_collect(cids: List[str], names: Dict[str, str] = None):
         # input CIDs are children but we don't fetch their blocks
         car_filename = f"collect_{collection_cid}.car"
         generate_shallow_car_file(collection_cid, [], car_filename)
+
+        if pin:
+            pin_to_storacha(car_filename)
     else:
         print("Error: Failed to create collection", file=sys.stderr)
         sys.exit(1)

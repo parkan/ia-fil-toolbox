@@ -306,22 +306,22 @@ def process_cid_files(cid: str) -> List[Tuple[str, str]]:
     print(f"  Completed processing all identifiers for {cid}", file=sys.stderr)
     return results
 
-def run_files(cids: List[str]):
+def run_files(cids: List[str], pin: bool = False):
     all_results = []
-    
+
     for cid in cids:
         try:
             results = process_cid_files(cid)
             all_results.extend(results)
         except Exception as e:
             print(f"Error processing {cid}: {e}", file=sys.stderr)
-    
+
     # Only print CSV header and results if we have any
     if all_results:
         print("identifier,synthetic_cid")  # CSV header
         for identifier, synthetic_cid in all_results:
             print(f"{identifier},{synthetic_cid}")
-        
+
         # Create container directory with all synthetic directories
         print("\nCreating container directory...", file=sys.stderr)
         container_files = {}
@@ -329,14 +329,17 @@ def run_files(cids: List[str]):
         for identifier, synthetic_cid in all_results:
             container_files[identifier] = synthetic_cid
             child_cids.append(synthetic_cid)
-        
-        from shared import create_directory_via_mfs, generate_shallow_car_file
+
+        from shared import create_directory_via_mfs, generate_shallow_car_file, pin_to_storacha
         container_cid = create_directory_via_mfs(container_files, "extract_items_container")
-        
+
         if container_cid:
             print(f"\n📁 Container directory (MFS root): {container_cid}", file=sys.stderr)
             print(container_cid)  # Also print to stdout for easy access
-            
+
             # Generate shallow CAR file with just the directory structure
             car_filename = f"extract_items_{container_cid}.car"
             generate_shallow_car_file(container_cid, child_cids, car_filename)
+
+            if pin:
+                pin_to_storacha(car_filename)

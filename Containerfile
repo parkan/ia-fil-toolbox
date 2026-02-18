@@ -45,7 +45,6 @@ VOLUME /work
 VOLUME /config
 ENV IPFS_PATH="/config/ipfs"
 ENV XDG_CONFIG_HOME="/config"
-ENV WORKDIR="/work"
 
 WORKDIR /work
 

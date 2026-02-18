@@ -362,15 +362,13 @@ def validate_xml_completeness(cid: str, identifiers: List[str], results: Dict[st
 # Global variable to track daemon process
 _daemon_process = None
 
-def start_staging_ipfs(someguy=False):
-    """Start the staging IPFS daemon (and optionally someguy) and wait for it to be ready"""
+def start_staging_ipfs():
+    """Start the staging IPFS daemon and someguy, wait for ready."""
     global _daemon_process
-    
+
     if _daemon_process and _daemon_process.poll() is None:
-        # Daemon is already running
-        if someguy:
-            from daemon_cmd import ensure_someguy_running
-            ensure_someguy_running()
+        from daemon_cmd import ensure_someguy_running
+        ensure_someguy_running()
         return _daemon_process
     
     print("Starting staging IPFS daemon...", end="", file=sys.stderr)
@@ -410,17 +408,13 @@ def start_staging_ipfs(someguy=False):
     
     print(" ready", file=sys.stderr)
     
-    # Start someguy if requested
-    if someguy:
-        from daemon_cmd import start_someguy
-        someguy_result = start_someguy()
-        if someguy_result is None:
-            # someguy failed to start
-            print("Error: Failed to start someguy daemon", file=sys.stderr)
-            print("Use --no-someguy to disable if someguy is not needed.", file=sys.stderr)
-            # Stop IPFS before exiting
-            stop_staging_ipfs()
-            sys.exit(1)
+    # Start someguy
+    from daemon_cmd import start_someguy
+    someguy_result = start_someguy()
+    if someguy_result is None:
+        print("Error: Failed to start someguy daemon", file=sys.stderr)
+        stop_staging_ipfs()
+        sys.exit(1)
     
     # Create a dummy process object to maintain compatibility with existing code
     class DaemonProcess:
@@ -492,12 +486,9 @@ def stop_staging_ipfs():
         
         _daemon_process = None
 
-def ensure_staging_ipfs(someguy=False):
-    """Ensure staging IPFS daemon (and optionally someguy) is running, start if needed"""
-    import os
-    
+def ensure_staging_ipfs():
+    """Ensure staging IPFS and someguy daemons are running, start if needed."""
     try:
-        # Test if daemon is already running by using ipfs id --api directly
         result = subprocess.run(
             ['ipfs', '--api', '/ip4/127.0.0.1/tcp/5009', 'id'],
             capture_output=True,
@@ -505,25 +496,21 @@ def ensure_staging_ipfs(someguy=False):
             timeout=2
         )
         if result.returncode == 0:
-            # IPFS is running, check if we need to start someguy
-            if someguy:
-                from daemon_cmd import ensure_someguy_running
-                if not ensure_someguy_running():
-                    print("Error: Failed to start someguy daemon", file=sys.stderr)
-                    print("Use --no-someguy to disable if someguy is not needed.", file=sys.stderr)
-                    sys.exit(1)
-            return  # Already running
+            from daemon_cmd import ensure_someguy_running
+            if not ensure_someguy_running():
+                print("Error: Failed to start someguy daemon", file=sys.stderr)
+                sys.exit(1)
+            return
     except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
         pass
-    
-    # Check if there's a lock file but no responding daemon
-    lock_file = ".ipfs_staging/repo.lock"
+
+    ipfs_path = os.environ.get('IPFS_PATH', '.ipfs_staging')
+    lock_file = f"{ipfs_path}/repo.lock"
     if os.path.exists(lock_file):
         print(f"Warning: Cannot connect to IPFS daemon but lock file exists: {lock_file}", file=sys.stderr)
         print("This suggests a daemon may be running but not responding, or was not shut down cleanly.", file=sys.stderr)
-    
-    # Start the daemon(s)
-    start_staging_ipfs(someguy=someguy)
+
+    start_staging_ipfs()
 
 def pin_cid(cid: str) -> bool:
     """Pin a CID in the staging IPFS node"""
@@ -697,6 +684,46 @@ def generate_car_file(root_cid: str, output_path: str) -> bool:
     except Exception as e:
         print(f"  ⚠️ Error generating CAR file: {e}", file=sys.stderr)
         return False
+
+def check_storacha_auth():
+    """Check that storacha is authenticated. Returns True if ready, False otherwise."""
+    try:
+        result = subprocess.run(
+            ['storacha', 'whoami'], capture_output=True, text=True, timeout=10
+        )
+        if result.returncode != 0:
+            print("Error: storacha not authenticated.", file=sys.stderr)
+            print("Run 'storacha login' and 'storacha space use' first.", file=sys.stderr)
+            return False
+        return True
+    except FileNotFoundError:
+        print("Error: storacha CLI not found.", file=sys.stderr)
+        return False
+    except subprocess.TimeoutExpired:
+        print("Error: storacha whoami timed out.", file=sys.stderr)
+        return False
+
+
+def pin_to_storacha(car_path: str):
+    """Upload a CAR file to storacha. Warns on failure, never raises."""
+    print(f"  Pinning {car_path} to storacha...", file=sys.stderr)
+    try:
+        result = subprocess.run(
+            ['storacha', 'up', '--car', car_path],
+            capture_output=True, text=True, timeout=300
+        )
+        if result.returncode == 0:
+            print(f"  ✓ Pinned: {result.stdout.strip()}", file=sys.stderr)
+        else:
+            print(f"  ⚠ Pin failed: {result.stderr.strip()}", file=sys.stderr)
+            print(f"  Run manually: storacha up --car {car_path}", file=sys.stderr)
+    except subprocess.TimeoutExpired:
+        print(f"  ⚠ Pin timed out after 300s", file=sys.stderr)
+        print(f"  Run manually: storacha up --car {car_path}", file=sys.stderr)
+    except Exception as e:
+        print(f"  ⚠ Pin error: {e}", file=sys.stderr)
+        print(f"  Run manually: storacha up --car {car_path}", file=sys.stderr)
+
 
 def gc_repo():
     """Run garbage collection on the staging IPFS repo"""

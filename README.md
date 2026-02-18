@@ -2,102 +2,6 @@
 
 Internet Archive & Filecoin toolbox for metadata crawling, item extraction, and root merging on IPFS DAGs.
 
-## Prerequisites
-
-- **IPFS** (Kubo): `ipfs` command must be available in PATH
-- **go-car**: For CAR file generation - install with `go install github.com/ipld/go-car/cmd/car@latest`
-- **someguy** (optional): For delegated routing - install from https://github.com/ipfs-shipyard/someguy
-
-## Installation
-
-```bash
-# Install globally
-uv tool install .
-
-# Or for development
-uv sync
-```
-
-## Usage
-
-### Basic Commands
-
-```bash
-# Extract items from _files.xml into synthetic directories
-ia-fil extract-items <cid> [<cid> ...]
-
-# Fetch metadata files
-ia-fil metadata <cid> [<cid> ...]
-
-# Merge multiple root CIDs into a single directory (flattens contents)
-ia-fil merge-roots <cid1> <cid2> [<cid3> ...]
-
-# Force expensive directory checks (default: uses file extension heuristics)
-ia-fil merge-roots --force-check-directories <cid1> <cid2>
-
-# Collect CIDs into parent directory (shallow, preserves structure)
-ia-fil collect <cid1> <cid2> [<cid3> ...]
-
-# Use with file input (plain text or CSV with "cid" column)
-ia-fil extract-items -f cids.txt
-ia-fil metadata -f cids.csv
-```
-
-### Daemon Management
-
-The tool automatically manages a staging IPFS daemon on port 5009. For persistent daemon:
-
-```bash
-# Run persistent daemons (IPFS + someguy)
-ia-fil run-daemons
-
-# Run without someguy delegated routing
-ia-fil --no-someguy run-daemons
-
-# Check daemon status
-ia-fil daemon-status
-```
-
-### Environment Variables
-
-- **`DEBUG=1`**: Enable verbose debug output showing detailed operation progress
-- **`SOMEGUY_ENABLED=0`**: Disable someguy delegated routing (auto-disabled in test environments)
-
-### Performance Options
-
-- **`--force-check-directories`** (merge-roots): Forces expensive directory type checks via `ipfs ls` for every entry. By default (False), the tool uses file extension heuristics to skip these checks for known file types, significantly speeding up operations on flat directories.
-
-### Output
-
-- **extract-items**: Creates synthetic directories and generates shallow CAR files containing only directory blocks
-  - Prints container CID to stdout
-  - Generates `extract_items_<cid>.car` file
-  
-- **merge-roots**: Merges CIDs into a single directory and generates a CAR file
-  - Prints merged root CID to stdout
-  - Generates `merged_root_<cid>.car` file
-  - Files with conflicting names (same name, different CID) are excluded from the merge
-
-- **collect**: Wraps CIDs into a parent directory without reading subgraphs
-  - Prints collection CID to stdout
-  - Each input CID becomes a subdirectory entry (named by its CID)
-  - Shallow operation: only fetches root block of each input, no recursive traversal
-
-- **metadata**: Saves metadata to SQLite database (default: `metadata.db`)
-
-### Examples
-
-```bash
-# Extract with debug output
-DEBUG=1 ia-fil extract-items bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi
-
-# Run without someguy
-ia-fil --no-someguy extract-items <cid>
-
-# Development mode
-uv run ia_fil.py extract-items <cid>
-```
-
 ## Container (Podman)
 
 The included Containerfile bundles the full stack: IPFS (Kubo), go-car, someguy, storacha CLI, and the Python toolbox.
@@ -133,34 +37,53 @@ podman run --rm \
   ia-fil-toolbox extract-items -f /work/cids.txt
 ```
 
+## Commands
+
+```bash
+# Extract items from _files.xml into synthetic directories
+ia-fil extract-items <cid> [<cid> ...]
+
+# Fetch and parse metadata into SQLite
+ia-fil metadata <cid> [<cid> ...] [--db metadata.db]
+
+# Merge multiple root CIDs into a single directory (flattens contents)
+ia-fil merge-roots <cid1> <cid2> [--force-check-directories]
+
+# Collect CIDs into parent directory (shallow, preserves structure)
+ia-fil collect <cid1> <cid2> [<cid3> ...]
+
+# Read CIDs from file (plain text or CSV with "cid" column)
+ia-fil extract-items -f cids.txt
+ia-fil metadata -f cids.csv
+
+# Pin output CAR to storacha after generation
+ia-fil --pin merge-roots <cid1> <cid2>
+
+# Check daemon status
+ia-fil daemon-status
+```
+
+### Output
+
+- **extract-items**: Shallow CAR with synthetic directory blocks → `extract_items_<cid>.car`
+- **merge-roots**: Shallow CAR with merged directory → `merge_roots_<cid>.car`
+- **collect**: Shallow CAR with parent directory → `collect_<cid>.car`
+- **metadata**: SQLite database (default `metadata.db`)
+
+All commands print the resulting CID to stdout; progress and errors go to stderr.
+
+### Global flags
+
+- `--pin` — upload generated CAR to storacha (requires `storacha login` + `storacha space use`)
+
 ### Environment variables
 
-These work in addition to the ones listed above:
-
-- **`FETCH_TIMEOUT=30`** — timeout in seconds for IPFS fetch operations (supports decimals, e.g. `0.1`)
-- **`WORKDIR=/work`** — working directory inside the container
+- **`DEBUG=1`** — verbose output
+- **`FETCH_TIMEOUT=30`** — timeout in seconds for IPFS fetch operations (supports decimals)
 
 ## Development
 
-### Running Tests
-
 ```bash
-# Run all tests
-pytest test_pipeline.py -v
-
-# Run specific test class
-pytest test_pipeline.py::TestIAFilToolbox -v
-```
-
-### Shell Completion
-
-```bash
-# Install bash completion
-ia-fil completion install bash
-
-# Install zsh completion
-ia-fil completion install zsh
-
-# Install fish completion
-ia-fil completion install fish
+uv sync
+uv run python test_pipeline.py
 ```
