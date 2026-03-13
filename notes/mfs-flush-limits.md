@@ -26,10 +26,22 @@ Each entry is ~50–100 bytes (CID link + name). 300k entries ≈ 30MB of
 actual data. The flush limit "protection" against OOM is solving a
 problem that doesn't exist at any practical scale.
 
+## Crash recovery changes the calculus
+
+After disabling periodic flushes (MFS_FLUSH_LIMIT=500000), a ~200k entry
+build completed the `files cp` loop but the daemon crashed before the
+final flush. Unflushed MFS state is in-memory only — the entire build
+was lost. No OOM killer in dmesg; cause unknown.
+
+Periodic flushing at 1024 ops is cheap insurance. With `FETCH_TIMEOUT`
+in place, each `files cp` is bounded, so the O(n) flush cost every 1024
+ops is negligible compared to network fetches. Worst case on crash: you
+lose the last 1023 ops, not the entire build.
+
 ## Correct approach for large MFS directories
 
-1. **Don't flush periodically** — set a high flush limit or disable
-   periodic flushing entirely; do a single final flush
+1. **Keep periodic flushing** (every 1024 ops) — not for memory, but
+   for crash recovery of unflushed in-memory state
 2. **Add timeouts to `files cp`** — the real failure mode is network
    I/O blocking forever on missing/unretrievable CIDs
 3. **Collect failures** — log CIDs that time out and continue building;

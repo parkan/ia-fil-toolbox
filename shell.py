@@ -73,6 +73,10 @@ class IAShell(cmd.Cmd):
         """Check IPFS daemon status"""
         self._run(["daemon-status"])
 
+    def emptyline(self):
+        """Do nothing on empty input (default repeats last command)."""
+        pass
+
     def do_quit(self, line):
         """Exit the shell"""
         return True

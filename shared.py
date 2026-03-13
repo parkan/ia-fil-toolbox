@@ -12,7 +12,7 @@ from typing import List, Optional, Dict, Any, Tuple, Set
 from lxml import etree
 
 # MFS configuration constants
-MFS_FLUSH_LIMIT = 500000
+MFS_FLUSH_LIMIT = 1024
 
 # Debug configuration
 DEBUG = os.environ.get('DEBUG', '').lower() in ('1', 'true', 'yes', 'on')
@@ -786,6 +786,12 @@ def create_directory_via_mfs(files_dict: Dict[str, str], name_prefix: str = "dir
 
             if result.returncode != 0:
                 failed.append((filename, file_cid, result.stderr.strip()))
+
+            # Periodic flush for crash recovery (unflushed state is in-memory only)
+            if i % MFS_FLUSH_LIMIT == 0:
+                if DEBUG:
+                    print(f"    DEBUG: Flushing MFS at {i}/{total_files}...", file=sys.stderr)
+                run_ipfs_cmd(['files', 'flush', mfs_path], capture_output=True, text=True)
 
         if failed:
             print(f"    {len(failed)}/{total_files} files failed:", file=sys.stderr)

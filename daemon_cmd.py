@@ -102,7 +102,13 @@ def start_daemon():
     repo_dir = os.environ.get('IPFS_PATH', '.ipfs_staging')
     env = os.environ.copy()
     env['IPFS_PATH'] = repo_dir
-    
+
+    # Remove stale api file from a previous crash
+    api_file = os.path.join(repo_dir, 'api')
+    if os.path.exists(api_file):
+        os.remove(api_file)
+        print("Removed stale IPFS api file", file=sys.stderr)
+
     print("Starting IPFS daemon on port 5009...", end="", file=sys.stderr)
     
     # Create temporary log files for daemon output

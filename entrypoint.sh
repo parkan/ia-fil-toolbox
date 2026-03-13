@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ── Clean up stale api file from previous crash ──────────────────────────
+rm -f "$IPFS_PATH/api"
+
 # ── Initialise IPFS repo if needed ──────────────────────────────────────
 if [ ! -f "$IPFS_PATH/config" ]; then
     echo "Initialising IPFS repo at $IPFS_PATH ..." >&2
