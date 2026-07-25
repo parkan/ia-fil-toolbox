@@ -56,22 +56,26 @@ def configure_ipfs():
         # Disable HTTP gateway (not needed for staging)
         (['config', 'Addresses.Gateway', ''], "HTTP gateway"),
         
-        # Routing: use a custom router set
-        (['config', 'Routing.Type', 'custom'], "Custom routing"),
-        
-        # Router: local delegated router at 127.0.0.1:8190
-        (['config', '--json', 'Routing.Routers.local', 
-          '{"Type":"http","Parameters":{"Endpoint":"http://127.0.0.1:8190/routing/v1"}}'], "Delegated router"),
-        
-        # Methods: all required methods mapped to "local"
-        (['config', '--json', 'Routing.Methods',
-          '{"find-providers":{"RouterName":"local"},'
-          '"provide":{"RouterName":"local"},'
-          '"find-peers":{"RouterName":"local"},'
-          '"get-ipns":{"RouterName":"local"},'
-          '"put-ipns":{"RouterName":"local"}}'], "Routing methods"),
-        
-        # HTTP Retrieval: enable
+        # Routing: autoclient mode is required for HTTPRetrieval to fire.
+        # Per Kubo docs, HTTPRetrieval only acts on /tls/http providers when
+        # Routing.Type is auto or autoclient (NOT custom). autoclient skips
+        # DHT server duties — appropriate for a staging/ingest node.
+        (['config', 'Routing.Type', 'autoclient'], "Routing type autoclient"),
+
+        # DelegatedRouters: HTTPRetrieval finds HTTP gateway providers from
+        # this list. Default "auto" expands via autoconf to public routers
+        # (delegated-ipfs.dev, cid.contact) which don't know about our private
+        # gateways. Point at local someguy so it returns records for endpoints
+        # configured via SOMEGUY_ENDPOINTS.
+        (['config', '--json', 'Routing.DelegatedRouters',
+          '["http://127.0.0.1:8190"]'], "Delegated routers"),
+
+        # Clear legacy custom-routing config so it doesn't shadow autoclient.
+        (['config', '--json', 'Routing.Routers', '{}'], "Clear Routing.Routers"),
+        (['config', '--json', 'Routing.Methods', '{}'], "Clear Routing.Methods"),
+
+        # HTTP Retrieval: enable (default is true in newer kubo, set explicitly
+        # for compatibility across versions).
         (['config', '--json', 'HTTPRetrieval.Enabled', 'true'], "HTTP retrieval"),
         
         # Provide: only provide pinned content (migrated from Reprovider.Strategy)
@@ -320,50 +324,22 @@ def start_someguy():
             pass
     
     atexit.register(cleanup_someguy_logs)
-    
-    # Generate throwaway peer IDs for endpoints (following run-someguy.sh pattern)
-    endpoints_str = os.environ.get('SOMEGUY_ENDPOINTS', 'https://ia.dcentnetworks.nl')
-    endpoints = [e.strip() for e in endpoints_str.split(',') if e.strip()]
-    peer_ids = []
-    
-    # Ensure keystore directory exists
-    ipfs_path = os.environ.get('IPFS_PATH', '.ipfs_staging')
-    keystore_dir = f"{ipfs_path}/keystore"
-    os.makedirs(keystore_dir, exist_ok=True)
 
-    for i, endpoint in enumerate(endpoints):
-        # Generate temporary key to get peer ID
-        key_name = f"tmp-throwaway-{os.getpid()}_{i}"
-        try:
-            # Use IPFS_PATH instead of --api for key generation to avoid keystore access issues
-            env = os.environ.copy()
-            env['IPFS_PATH'] = ipfs_path
-            result = subprocess.run(
-                ['ipfs', 'key', 'gen', '-t', 'ed25519', key_name],
-                capture_output=True, text=True, env=env
-            )
-            if result.returncode == 0:
-                peer_id = result.stdout.strip().split('\n')[-1]
-                peer_ids.append(peer_id)
-                # Clean up the key
-                subprocess.run(['ipfs', 'key', 'rm', key_name], capture_output=True, env=env)
-            else:
-                print(f"Failed to generate peer ID for {endpoint}: {result.stderr}", file=sys.stderr)
-                return None
-        except Exception as e:
-            print(f"Error generating peer ID: {e}", file=sys.stderr)
-            return None
-    
+    # someguy >=0.10 auto-generates deterministic synthetic peer IDs from the
+    # endpoint URL when --http-block-provider-peerids is omitted, and registers
+    # them for both /routing/v1/providers and /routing/v1/peers lookups. Passing
+    # our own peer IDs only registers them on the providers side, which leaves
+    # kubo's HTTPRetrieval peer-info lookup unanswered and the fetch hangs.
+    endpoints_str = os.environ.get('SOMEGUY_ENDPOINTS', 'https://filretrievals.dcentnetworks.nl')
+    endpoints = [e.strip() for e in endpoints_str.split(',') if e.strip()]
+
     # Build someguy command arguments
     cmd_args = ['someguy', 'start']
     cmd_args.extend(['--listen-address', '127.0.0.1:8190'])
     cmd_args.extend(['--dht', 'disabled'])
-    
-    # Add endpoints and peer IDs
+
     for endpoint in endpoints:
         cmd_args.extend(['--http-block-provider-endpoints', endpoint])
-    for peer_id in peer_ids:
-        cmd_args.extend(['--http-block-provider-peerids', peer_id])
     
     # Start someguy daemon
     try:
