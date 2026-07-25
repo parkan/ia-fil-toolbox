@@ -1,6 +1,6 @@
 FROM ghcr.io/astral-sh/uv:debian
 
-ARG KUBO_VERSION=0.39.0
+ARG KUBO_VERSION=0.41.0
 ARG GO_VERSION=1.23.6
 ARG NODE_VERSION=22.14.0
 
@@ -26,7 +26,7 @@ ENV PATH="/usr/local/go/bin:/root/go/bin:${PATH}"
 
 # Install go-car and someguy
 RUN go install github.com/ipld/go-car/cmd/car@latest && \
-    go install github.com/ipfs/someguy@latest
+    go install github.com/ipfs/someguy@v0.12.0
 
 # Install storacha cli
 RUN npm install -g @storacha/cli
