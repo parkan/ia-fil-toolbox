@@ -69,6 +69,10 @@ class IAShell(cmd.Cmd):
         """Collect CIDs into a parent directory (shallow)"""
         self._run(["collect"] + shlex.split(line))
 
+    def do_verify(self, line):
+        """Check retrievability of each CID via lightweight root-block fetch"""
+        self._run(["verify"] + shlex.split(line))
+
     def do_daemon_status(self, line):
         """Check IPFS daemon status"""
         self._run(["daemon-status"])
@@ -102,7 +106,7 @@ class IAShell(cmd.Cmd):
 
     # ── Completions ─────────────────────────────────────────────────────
     _ia_commands = [
-        "extract-items", "metadata", "merge-roots", "collect",
+        "extract-items", "metadata", "merge-roots", "collect", "verify",
         "daemon-status", "storacha", "help", "quit", "exit",
     ]
 

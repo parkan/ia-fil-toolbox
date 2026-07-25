@@ -106,6 +106,29 @@ def collect(ctx, cids, file):
     run_collect(cid_list, pin=ctx.obj['pin'])
 
 @cli.command()
+@click.argument('cids', nargs=-1)
+@click.option('-f', '--file', type=click.Path(exists=True), help='File containing CIDs (plain text or CSV with "cid" column)')
+@click.option('--timeout', type=float, default=30.0, help='Per-CID timeout in seconds (default: 30)')
+@click.option('--workers', type=int, default=8, help='Parallel verification workers (default: 8)')
+@click.pass_context
+def verify(ctx, cids, file, timeout, workers):
+    """Check retrievability of each CID via lightweight root-block fetch"""
+    from verify_cmd import run_verify
+
+    cid_list = []
+    if file:
+        cid_list = read_cids_from_file(file)
+    elif cids:
+        cid_list = list(cids)
+    else:
+        click.echo("Error: Must provide either CIDs as arguments or use --file option", err=True)
+        raise click.Abort()
+
+    ensure_staging_ipfs()
+
+    run_verify(cid_list, timeout=timeout, workers=workers)
+
+@cli.command()
 def run_daemons():
     """Run persistent IPFS and someguy daemons"""
     from daemon_cmd import run_persistent_daemons
